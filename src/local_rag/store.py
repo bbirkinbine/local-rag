@@ -69,6 +69,20 @@ class Store:
         """Return ``{source_name: row_count}`` across every table in the DB."""
         return {name: int(self._db.open_table(name).count_rows()) for name in self._table_names()}
 
+    def file_hashes(self, source_name: str) -> dict[str, str]:
+        """Return ``{source_path: file_hash}`` for every distinct file in the table.
+
+        All chunks of one file share the same hash, so we collapse to one entry
+        per ``source_path``. Used by the indexer to detect unchanged files and
+        skip re-embedding.
+        """
+        tbl = self._db.open_table(source_name)
+        arrow_tbl = tbl.to_arrow().select(["source_path", "file_hash"])
+        out: dict[str, str] = {}
+        for row in arrow_tbl.to_pylist():
+            out.setdefault(str(row["source_path"]), str(row["file_hash"]))
+        return out
+
     def _table_names(self) -> list[str]:
         # LanceDB >=0.30 returns a paginated ListTablesResponse; .tables is
         # the flat list we want.

@@ -8,6 +8,7 @@ dependencies = [
   "httpx",
   "structlog",
   "mcp",
+  "pathspec",
 ]
 
 [project.scripts]
