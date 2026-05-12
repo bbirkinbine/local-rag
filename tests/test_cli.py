@@ -328,6 +328,49 @@ def test_search_unknown_source_exits_two(
     assert "vault" in err  # surfaces valid sources
 
 
+def test_mcp_dispatches_to_run_stdio(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_embedder: FakeEmbedder,
+) -> None:
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+
+    called = {"hit": False}
+
+    def fake_run_stdio(*args: object, **kwargs: object) -> None:
+        called["hit"] = True
+
+    monkeypatch.setattr(cli, "run_stdio", fake_run_stdio)
+
+    rc = cli.main(["--config", str(cfg), "mcp"])
+
+    assert rc == 0
+    assert called["hit"] is True
+
+
+def test_mcp_health_check_failure_exits_three(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+
+    def fake_run_stdio(*args: object, **kwargs: object) -> None:
+        raise EmbedderError("ollama not reachable")
+
+    # _build_embedder default factory is fine; the failure surfaces from
+    # within run_stdio (which is where health_check happens in production).
+    monkeypatch.setattr(cli, "run_stdio", fake_run_stdio)
+
+    rc = cli.main(["--config", str(cfg), "mcp"])
+
+    assert rc == 3
+    err = capsys.readouterr().err
+    assert "ollama" in err.lower()
+
+
 def test_search_sources_flag_restricts_query(
     tmp_path: Path, patch_embedder: FakeEmbedder, capsys: pytest.CaptureFixture[str]
 ) -> None:

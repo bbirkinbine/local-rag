@@ -1,8 +1,8 @@
 """The ``local-rag`` CLI entry point.
 
-Three subcommands: ``index``, ``search``, ``list``. (``mcp`` lands in
-slice 7.) User-facing output goes to stdout; structlog log lines go to
-stderr.
+Four subcommands: ``index``, ``search``, ``list``, ``mcp``. User-facing
+output goes to stdout; structlog log lines go to stderr (critical for
+``mcp``, where stdout is the MCP JSON-RPC stream).
 
 Built around small seams the tests poke at:
 - :func:`_build_embedder` is the factory tests monkey-patch to inject a
@@ -23,6 +23,7 @@ import structlog
 from local_rag.config import Config, ConfigError
 from local_rag.embedder import EmbedderError, OllamaEmbedder
 from local_rag.indexer import Indexer, IndexResult
+from local_rag.mcp_server import run_stdio
 from local_rag.models import SearchHit
 from local_rag.paths import default_config_path
 from local_rag.store import Store
@@ -58,6 +59,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_index(config, store, args.sources)
     if args.cmd == "search":
         return _cmd_search(config, store, args.query, args.sources, args.k)
+    if args.cmd == "mcp":
+        return _cmd_mcp(config, store)
     parser.error(f"unknown command {args.cmd!r}")
     return 2  # unreachable; argparse.error exits
 
@@ -153,6 +156,16 @@ def _cmd_search(
     return 0
 
 
+def _cmd_mcp(config: Config, store: Store) -> int:
+    try:
+        embedder = _build_embedder(config)
+        run_stdio(config, store, embedder)
+    except EmbedderError as e:
+        _err(f"embedder unreachable: {e}")
+        return 3
+    return 0
+
+
 # ------------------------------------------------------------------- output
 
 
@@ -210,6 +223,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p_search.add_argument(
         "-k", type=int, default=10, help="top-k hits to return (default: 10)",
     )
+
+    sub.add_parser("mcp", help="run the MCP server over stdio")
 
     return parser
 
