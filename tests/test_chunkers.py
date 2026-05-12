@@ -281,6 +281,59 @@ def test_chunk_file_extension_case_insensitive() -> None:
     assert any(c.heading_path == "/T" for c in chunks)
 
 
+def test_code_splits_very_long_single_line_into_multiple_chunks() -> None:
+    """Real-world hazard: transcripts often arrive as one giant unbroken line.
+    The line-window chunker treats it as a single chunk; we then can't embed
+    it. Verify we split such chunks down to a manageable char budget."""
+    text = "x" * 40_000  # one line, no newlines, 40k chars
+    chunks = chunk_code(text, source_path="/transcript.txt", file_hash="h")
+
+    assert len(chunks) >= 2
+    # No single chunk exceeds the embed budget headroom (24000 by default).
+    assert all(len(c.text) <= 24_000 for c in chunks)
+    # Round-trip still holds piecewise: concatenating in order rebuilds text.
+    rebuilt = "".join(c.text for c in chunks)
+    assert rebuilt == text
+    assert [c.chunk_index for c in chunks] == list(range(len(chunks)))
+
+
+def test_code_long_chunk_split_prefers_whitespace_boundaries() -> None:
+    """When a long chunk must be split, the cut should fall at whitespace
+    where possible, so we don't break in the middle of words."""
+    text = ("word " * 6000).rstrip()  # ~30k chars, all whitespace-separated
+    chunks = chunk_code(text, source_path="/log.txt", file_hash="h")
+
+    assert len(chunks) >= 2
+    # Every non-final chunk should end on whitespace.
+    for c in chunks[:-1]:
+        assert c.text[-1].isspace() or c.text.endswith("word")
+
+
+def test_markdown_splits_oversized_section_chunk() -> None:
+    """A single heading section whose body is larger than the embed budget
+    also gets split."""
+    big_body = "x" * 35_000
+    text = f"# Section\n\n{big_body}\n"
+    chunks = chunk_markdown(text, source_path="/big.md", file_hash="h")
+
+    assert len(chunks) >= 2
+    assert all(len(c.text) <= 24_000 for c in chunks)
+    # First sub-chunk carries the heading_path; siblings inherit it.
+    assert all(c.heading_path == "/Section" for c in chunks)
+
+
+def test_oversized_split_preserves_round_trip_offsets(
+    tmp_path: object,  # unused but pytest fixture-style
+) -> None:
+    """text[char_start:char_end] must equal chunk.text for every sub-chunk."""
+    del tmp_path  # silence "unused"
+    text = "abcdefghij" * 5000  # 50k chars, no whitespace
+    chunks = chunk_code(text, source_path="/blob.txt", file_hash="h")
+
+    for c in chunks:
+        assert text[c.char_start : c.char_end] == c.text
+
+
 def test_chunk_file_returns_chunk_instances() -> None:
     chunks = chunk_file("hello\n", source_path="/a.txt", file_hash="h")
 
