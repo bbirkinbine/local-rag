@@ -6,11 +6,11 @@ works where depends on the client.
 
 ## Capability matrix
 
-| Client                       | Transports it accepts   | Recommended            | local-rag status                     |
-|------------------------------|-------------------------|------------------------|--------------------------------------|
-| Claude Code (CLI + VS Code)  | stdio, HTTP             | **stdio**              | ✓ Fully supported                    |
-| Claude Cowork (desktop)      | HTTP only               | **HTTP (loopback)**    | ✓ Fully supported                    |
-| Claude.ai (web)              | HTTP only, public URL   | none                   | ✗ Not recommended (see below)        |
+| Client                       | Transports it accepts                    | Recommended           | local-rag status                  |
+|------------------------------|------------------------------------------|-----------------------|-----------------------------------|
+| Claude Code (CLI + VS Code)  | stdio, HTTP, HTTPS                       | **stdio**             | ✓ Fully supported                 |
+| Claude Cowork (desktop)      | **HTTPS only** (no plain HTTP, no stdio) | **HTTPS (loopback)**  | ✓ Fully supported                 |
+| Claude.ai (web)              | HTTPS only, public URL                   | none                  | ✗ Not recommended (see below)     |
 
 The rest of this doc walks each one. Pick the section that matches your
 client.
