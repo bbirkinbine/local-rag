@@ -1,6 +1,6 @@
 # local-rag
 
-[![AI-Assisted](https://img.shields.io/badge/AI--Assisted-Claude-7c3aed)](#ai-assisted-codebase)
+[![AI-Assisted](https://img.shields.io/badge/AI--Assisted-Claude-7c3aed)](#acknowledgements)
 [![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/)
 
 Local semantic + keyword search across your Obsidian vault and source repos,
@@ -174,27 +174,9 @@ src/local_rag/
 The full spec lives at [`docs/specs/local-rag.md`](docs/specs/local-rag.md).
 Per-slice implementation specs at [`docs/specs/slice-*.md`](docs/specs/).
 
-## AI-assisted codebase
+## Acknowledgements
 
-This project was built collaboratively with Claude (Anthropic) following a
-documented agentic-programming workflow. Each implementation slice ran
-through:
-
-1. **Spec** — a short markdown file in `docs/specs/` defining success
-   criteria, non-goals, and tests.
-2. **Failing tests first** — pytest tests written before any implementation,
-   executed to confirm they fail.
-3. **Implementation** — the smallest code that makes the tests pass.
-4. **Reviewer subagent** — an independent Claude instance reviews the diff
-   against the spec, with no visibility into the implementer's reasoning,
-   and flags blockers / nits before commit.
-5. **Commit** — `Co-Authored-By: Claude` trailers on every commit.
-
-All design decisions, code-review acceptance, and merge approvals are
-human-driven. Claude operates inside the spec → tests → review loop, not
-outside it. The methodology itself is documented in the author's notes
-(referenced from `CLAUDE.md`); the per-slice artifacts in `docs/specs/`
-show the trail.
+This project was developed with the assistance of AI tools.
 
 ## License
 
