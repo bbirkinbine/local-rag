@@ -14,7 +14,7 @@ import pytest
 
 from local_rag.config import Source
 from local_rag.indexer import Indexer
-from local_rag.mcp_server import build_tools
+from local_rag.mcp_server import _bearer_auth_middleware, build_tools
 from local_rag.store import Store
 
 DIM = 4
@@ -200,3 +200,111 @@ def test_search_returns_empty_when_no_sources_indexed(store: Store) -> None:
     tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
 
     assert tools.search("anything", sources=None, k=5) == []
+
+
+# ----------------------------------------------------- bearer auth middleware
+
+
+class _SentinelApp:
+    """Records that it was called; emits a minimal 200 HTTP response."""
+
+    def __init__(self):
+        self.called = False
+
+    async def __call__(self, scope, receive, send):
+        del scope, receive
+        self.called = True
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"", "more_body": False})
+
+
+async def _run_middleware(
+    middleware: object, headers: list[tuple[bytes, bytes]]
+) -> tuple[int, bytes]:
+    """Drive the middleware with a single HTTP scope and capture the response."""
+    sent: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": b"", "more_body": False}
+
+    async def send(msg: dict[str, object]) -> None:
+        sent.append(msg)
+
+    scope = {"type": "http", "method": "POST", "path": "/mcp", "headers": headers}
+    await middleware(scope, receive, send)  # type: ignore[operator]
+
+    status_msg = next(m for m in sent if m["type"] == "http.response.start")
+    body_msg = next((m for m in sent if m["type"] == "http.response.body"), None)
+    return int(status_msg["status"]), bytes(body_msg["body"]) if body_msg else b""
+
+
+@pytest.mark.asyncio
+async def test_bearer_middleware_rejects_missing_header() -> None:
+    inner = _SentinelApp()
+    mw = _bearer_auth_middleware(inner, "secret")
+
+    status, body = await _run_middleware(mw, headers=[])
+
+    assert status == 401
+    assert b"bearer" in body.lower()
+    assert inner.called is False
+
+
+@pytest.mark.asyncio
+async def test_bearer_middleware_rejects_wrong_scheme() -> None:
+    inner = _SentinelApp()
+    mw = _bearer_auth_middleware(inner, "secret")
+
+    status, _ = await _run_middleware(
+        mw, headers=[(b"authorization", b"Basic dXNlcjpwdw==")]
+    )
+
+    assert status == 401
+    assert inner.called is False
+
+
+@pytest.mark.asyncio
+async def test_bearer_middleware_rejects_wrong_token() -> None:
+    inner = _SentinelApp()
+    mw = _bearer_auth_middleware(inner, "secret")
+
+    status, _ = await _run_middleware(
+        mw, headers=[(b"authorization", b"Bearer wrong")]
+    )
+
+    assert status == 401
+    assert inner.called is False
+
+
+@pytest.mark.asyncio
+async def test_bearer_middleware_passes_through_with_correct_token() -> None:
+    inner = _SentinelApp()
+    mw = _bearer_auth_middleware(inner, "secret")
+
+    await _run_middleware(mw, headers=[(b"authorization", b"Bearer secret")])
+
+    assert inner.called is True
+
+
+@pytest.mark.asyncio
+async def test_bearer_middleware_passes_through_non_http_scopes() -> None:
+    """Lifespan/websocket scopes shouldn't be gated by HTTP auth."""
+    inner = _SentinelApp()
+    mw = _bearer_auth_middleware(inner, "secret")
+
+    sent: list[dict[str, object]] = []
+
+    async def receive() -> dict[str, object]:
+        return {"type": "lifespan.startup"}
+
+    async def send(msg: dict[str, object]) -> None:
+        sent.append(msg)
+
+    await mw({"type": "lifespan"}, receive, send)  # type: ignore[operator]
+
+    assert inner.called is True
+    # Auth middleware must not have synthesized a 401 for a non-HTTP scope.
+    assert not any(
+        m.get("type") == "http.response.start" and m.get("status") == 401
+        for m in sent
+    )

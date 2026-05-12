@@ -12,6 +12,7 @@ Built around small seams the tests poke at:
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import logging
 import os
 import sys
@@ -23,7 +24,7 @@ import structlog
 from local_rag.config import Config, ConfigError
 from local_rag.embedder import EmbedderError, OllamaEmbedder
 from local_rag.indexer import Indexer, IndexResult
-from local_rag.mcp_server import run_stdio
+from local_rag.mcp_server import run_http, run_stdio
 from local_rag.models import SearchHit
 from local_rag.paths import default_config_path
 from local_rag.store import Store
@@ -60,7 +61,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "search":
         return _cmd_search(config, store, args.query, args.sources, args.k)
     if args.cmd == "mcp":
-        return _cmd_mcp(config, store)
+        return _cmd_mcp(config, store, args)
     parser.error(f"unknown command {args.cmd!r}")
     return 2  # unreachable; argparse.error exits
 
@@ -156,7 +157,41 @@ def _cmd_search(
     return 0
 
 
-def _cmd_mcp(config: Config, store: Store) -> int:
+def _is_loopback_host(host: str) -> bool:
+    """True for ``localhost`` and any literal IPv4/IPv6 loopback address.
+
+    Accepts ``::1``, the bracketed ``[::1]`` URL form, the expanded
+    ``0:0:0:0:0:0:0:1``, and the IPv4-mapped ``::ffff:127.0.0.1`` variants —
+    none of these are reachable off the box.
+    """
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False
+
+
+def _cmd_mcp(config: Config, store: Store, args: argparse.Namespace) -> int:
+    if args.transport == "http":
+        token = args.token or os.environ.get("LOCAL_RAG_MCP_TOKEN")
+        if not _is_loopback_host(args.host) and not token:
+            _err(
+                f"refusing to bind --host {args.host} without a token; "
+                "set --token or $LOCAL_RAG_MCP_TOKEN, or bind to 127.0.0.1"
+            )
+            return 2
+        try:
+            embedder = _build_embedder(config)
+            run_http(
+                config, store, embedder,
+                host=args.host, port=args.port, token=token,
+            )
+        except EmbedderError as e:
+            _err(f"embedder unreachable: {e}")
+            return 3
+        return 0
+
     try:
         embedder = _build_embedder(config)
         run_stdio(config, store, embedder)
@@ -224,7 +259,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "-k", type=int, default=10, help="top-k hits to return (default: 10)",
     )
 
-    sub.add_parser("mcp", help="run the MCP server over stdio")
+    p_mcp = sub.add_parser("mcp", help="run the MCP server (stdio by default)")
+    p_mcp.add_argument(
+        "--transport", choices=["stdio", "http"], default="stdio",
+        help="transport: stdio (default) or streamable-http",
+    )
+    p_mcp.add_argument(
+        "--host", default="127.0.0.1",
+        help="bind host for --transport http (default: 127.0.0.1)",
+    )
+    p_mcp.add_argument(
+        "--port", type=int, default=8765,
+        help="bind port for --transport http (default: 8765)",
+    )
+    p_mcp.add_argument(
+        "--token", default=None,
+        help=(
+            "bearer token required on every HTTP request; falls back to "
+            "$LOCAL_RAG_MCP_TOKEN. Required when --host is not loopback."
+        ),
+    )
 
     return parser
 
