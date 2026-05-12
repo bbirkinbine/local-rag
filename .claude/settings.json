@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run ruff check src/ tests/ && uv run mypy src/"
+          }
+        ]
+      }
+    ]
+  }
+}

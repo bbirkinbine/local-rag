@@ -1,0 +1,57 @@
+[project]
+name = "local-rag"
+version = "0.1.0"
+description = "Local semantic search across Obsidian vault + source repos, exposed over MCP."
+requires-python = ">=3.12"
+dependencies = [
+  "lancedb",
+  "httpx",
+  "structlog",
+  "mcp",
+]
+
+[project.scripts]
+local-rag = "local_rag.cli:main"
+
+[tool.uv]
+dev-dependencies = [
+  "pytest>=8",
+  "pytest-asyncio",
+  "pytest-cov",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "pre-commit",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Sensible defaults that catch agent mistakes
+select = [
+  "E", "F", "W",   # pycodestyle / pyflakes
+  "I",             # isort
+  "B",             # bugbear (catches common mistakes)
+  "UP",            # pyupgrade
+  "SIM",           # simplify
+  "RUF",           # ruff-specific
+  "ANN",           # annotations (force type hints)
+  "TID",           # tidy imports
+  "PTH",           # use pathlib
+]
+ignore = ["ANN101", "ANN102"]  # allow self/cls without annotation
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["ANN", "S101"]  # allow asserts in tests, no annotation requirement
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_ignores = true
+warn_return_any = true
+
+[tool.pytest.ini_options]
+addopts = "-ra --strict-markers --strict-config"
+testpaths = ["tests"]
+asyncio_mode = "auto"

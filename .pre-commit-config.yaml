@@ -1,0 +1,16 @@
+uv run pre-commit install                # install git hooks
+uv run pre-commit run --all-files        # run once across the repo
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.11.0
+    hooks:
+      - id: mypy
+        args: [--strict]
+        additional_dependencies: []   # add types-* packages here as needed
