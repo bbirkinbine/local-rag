@@ -333,6 +333,99 @@ def test_missing_file_raises_config_error(tmp_path: Path) -> None:
         Config.load(tmp_path / "does-not-exist.toml")
 
 
+def test_dim_as_boolean_raises_config_error(tmp_path: Path, vault_dir: Path) -> None:
+    """`dim = true` is technically int-typed in Python (bool ⊂ int) — reject it."""
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        f"""
+db_path = "{tmp_path}/db"
+
+[embedding]
+provider = "ollama"
+model = "bge-m3"
+url = "http://localhost:11434"
+dim = true
+
+[[sources]]
+name = "v"
+path = "{vault_dir}"
+type = "markdown"
+""",
+    )
+
+    with pytest.raises(ConfigError, match=r"dim"):
+        Config.load(cfg_path)
+
+
+def test_config_file_with_utf8_bom_is_handled(tmp_path: Path, vault_dir: Path) -> None:
+    body = f"""
+db_path = "{tmp_path}/db"
+
+[embedding]
+provider = "ollama"
+model = "bge-m3"
+url = "http://localhost:11434"
+dim = 1024
+
+[[sources]]
+name = "v"
+path = "{vault_dir}"
+type = "markdown"
+"""
+    cfg_path = tmp_path / "config.toml"
+    cfg_path.write_bytes("﻿".encode() + body.encode("utf-8"))
+
+    config = Config.load(cfg_path)
+
+    assert config.embedding.model == "bge-m3"
+
+
+def test_sources_as_non_list_raises(tmp_path: Path) -> None:
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        f"""
+db_path = "{tmp_path}/db"
+
+[embedding]
+provider = "ollama"
+model = "bge-m3"
+url = "http://localhost:11434"
+dim = 1024
+
+sources = "vault"
+""",
+    )
+
+    with pytest.raises(ConfigError, match=r"sources"):
+        Config.load(cfg_path)
+
+
+def test_ignore_with_non_string_entry_raises(
+    tmp_path: Path, vault_dir: Path
+) -> None:
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        f"""
+db_path = "{tmp_path}/db"
+
+[embedding]
+provider = "ollama"
+model = "bge-m3"
+url = "http://localhost:11434"
+dim = 1024
+
+[[sources]]
+name = "v"
+path = "{vault_dir}"
+type = "markdown"
+ignore = ["ok", 42]
+""",
+    )
+
+    with pytest.raises(ConfigError, match=r"ignore"):
+        Config.load(cfg_path)
+
+
 def test_sources_preserve_toml_order(tmp_path: Path, vault_dir: Path, code_dir: Path) -> None:
     cfg_path = _write(
         tmp_path / "config.toml",

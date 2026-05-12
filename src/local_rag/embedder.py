@@ -20,6 +20,17 @@ _NORM_TOLERANCE = 1e-3
 _WARMUP_TEXT = "warmup"
 _NORMALIZATION_PROBE_TEXT = "normalization check"
 
+# bge-m3 context window is 8192 tokens. ~4 chars/token is a rough upper bound;
+# 30k chars leaves headroom for non-English text and BPE quirks. Beyond this,
+# Ollama silently truncates server-side — we'd rather fail loud than embed a
+# truncated chunk.
+_MAX_INPUT_CHARS = 30_000
+
+# Default per-request batch size. Keeps a single embed() call from sending an
+# unbounded number of texts in one POST (which would time out on a cold model
+# or large input volume). The caller can override via the constructor.
+_DEFAULT_BATCH_SIZE = 64
+
 
 class EmbedderError(Exception):
     """Raised when the embedder cannot reach Ollama or produce valid embeddings."""
@@ -35,10 +46,14 @@ class OllamaEmbedder:
         dim: int,
         timeout: float = 60.0,
         client: httpx.Client | None = None,
+        batch_size: int = _DEFAULT_BATCH_SIZE,
     ) -> None:
+        if batch_size <= 0:
+            raise ValueError(f"batch_size must be positive, got {batch_size}")
         self._url = url.rstrip("/")
         self._model = model
         self._dim = dim
+        self._batch_size = batch_size
         if client is None:
             self._client = httpx.Client(timeout=timeout)
             self._owns_client = True
@@ -101,14 +116,34 @@ class OllamaEmbedder:
             )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """Embed a batch of texts. Returns one vector per input, same order."""
+        """Embed a batch of texts. Returns one vector per input, same order.
+
+        Splits the input into ``batch_size`` chunks internally and concatenates
+        the results, so the caller doesn't need to know about per-request
+        limits. Each individual text is bounded by ``_MAX_INPUT_CHARS`` —
+        going over raises rather than letting Ollama silently truncate.
+        """
         if not texts:
             return []
 
+        for i, t in enumerate(texts):
+            if len(t) > _MAX_INPUT_CHARS:
+                raise EmbedderError(
+                    f"input {i} has {len(t)} chars; exceeds limit of "
+                    f"{_MAX_INPUT_CHARS} (Ollama would silently truncate it)"
+                )
+
+        result: list[list[float]] = []
+        for start in range(0, len(texts), self._batch_size):
+            batch = texts[start : start + self._batch_size]
+            result.extend(self._embed_one_batch(batch))
+        return result
+
+    def _embed_one_batch(self, batch: list[str]) -> list[list[float]]:
         try:
             r = self._client.post(
                 f"{self._url}/api/embed",
-                json={"model": self._model, "input": texts},
+                json={"model": self._model, "input": batch},
             )
             r.raise_for_status()
         except httpx.HTTPError as e:
@@ -121,7 +156,7 @@ class OllamaEmbedder:
 
         if not isinstance(payload, dict):
             raise EmbedderError(f"Ollama /api/embed returned non-object: {type(payload).__name__}")
-        return self._parse_embeddings(payload, expected_count=len(texts))
+        return self._parse_embeddings(payload, expected_count=len(batch))
 
     def warm_up(self) -> None:
         """Issue a single embed to force-load the model so the first real call is fast."""

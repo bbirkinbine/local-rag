@@ -70,6 +70,60 @@ def test_embed_returns_vectors_in_order() -> None:
     assert all(len(v) == DIM for v in result)
 
 
+def test_embed_raises_when_input_exceeds_char_limit() -> None:
+    """bge-m3 caps at 8192 tokens (~32k chars). Silent server-side truncation
+    would degrade vectors invisibly — fail loud instead."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"embeddings": [[0.0] * DIM]})
+
+    with (
+        _embedder(handler) as e,
+        pytest.raises(EmbedderError, match=r"exceeds|too long|limit"),
+    ):
+        e.embed(["x" * 40_000])
+
+
+def test_embed_auto_batches_large_input_lists() -> None:
+    """Caller passes 150 texts in one call; embedder splits internally so no
+    single HTTP request carries an unwieldy batch."""
+    received_batch_sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content)
+        n = len(body["input"])
+        received_batch_sizes.append(n)
+        return httpx.Response(200, json={"embeddings": [[0.1] * DIM] * n})
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport)
+    e = OllamaEmbedder(URL, MODEL, DIM, client=client, batch_size=64)
+
+    texts = [f"t{i}" for i in range(150)]
+    result = e.embed(texts)
+
+    assert len(result) == 150
+    # 150 split into batches of 64 → [64, 64, 22]
+    assert received_batch_sizes == [64, 64, 22]
+
+
+def test_embed_default_batch_size_used_for_modest_input() -> None:
+    """A 10-text call fits in one batch with the default batch_size."""
+    call_count = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        call_count["n"] += 1
+        body = json.loads(request.content)
+        return httpx.Response(
+            200, json={"embeddings": [[0.0] * DIM] * len(body["input"])}
+        )
+
+    with _embedder(handler) as e:
+        e.embed(["x"] * 10)
+
+    assert call_count["n"] == 1
+
+
 def test_embed_raises_on_http_error() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(500, text="internal error")

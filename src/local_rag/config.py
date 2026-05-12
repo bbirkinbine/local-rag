@@ -53,8 +53,14 @@ class Config:
         except OSError as e:
             raise ConfigError(f"could not read config file {path}: {e}") from e
 
+        # `utf-8-sig` strips a leading BOM if present (hand-edited configs on
+        # Windows sometimes carry one); on BOM-free files it behaves like utf-8.
         try:
-            raw = tomllib.loads(raw_bytes.decode("utf-8"))
+            text = raw_bytes.decode("utf-8-sig")
+        except UnicodeDecodeError as e:
+            raise ConfigError(f"config file {path} is not valid UTF-8: {e}") from e
+        try:
+            raw = tomllib.loads(text)
         except tomllib.TOMLDecodeError as e:
             raise ConfigError(f"invalid TOML in {path}: {e}") from e
 
@@ -72,6 +78,10 @@ def _require[T](obj: dict[str, Any], key: str, kind: type[T]) -> T:
     if key not in obj:
         raise ConfigError(f"missing required field: {key!r}")
     value = obj[key]
+    # Python's `bool` is a subclass of `int`, so `isinstance(True, int)` is True.
+    # Reject bools when an int is expected so `dim = true` doesn't slip past.
+    if kind is int and isinstance(value, bool):
+        raise ConfigError(f"field {key!r} must be a int, got bool")
     if not isinstance(value, kind):
         raise ConfigError(f"field {key!r} must be a {kind.__name__}, got {type(value).__name__}")
     return value
