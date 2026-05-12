@@ -138,6 +138,15 @@ Once registered, the three tools (`search`, `list_sources`, `index_status`)
 appear in Claude's tool list automatically; the model decides when to call
 them based on the conversation.
 
+## Running it on a schedule or in the background
+
+For "always-on" setups (indexer firing every 30 min, HTTP server staying up
+across reboots), see [docs/deployment.md](docs/deployment.md). It covers
+cron and `launchd` for periodic indexing, plus `nohup` / `launchd` / `tmux`
+options for keeping the HTTP server running. The two processes are safe to
+run concurrently — LanceDB uses snapshot semantics, so the search server
+picks up newly-indexed rows on its next query without a restart.
+
 ## Configuration reference
 
 | Key | Type | Notes |
