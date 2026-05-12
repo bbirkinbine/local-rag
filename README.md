@@ -103,40 +103,39 @@ uv run local-rag mcp --transport http --port 8765   # HTTP server (for Cowork)
 
 ## Wire it into Claude
 
-### Claude Code (VS Code)
+Quick recipes below. For the full client matrix (including why claude.ai web
+isn't recommended), prompt-tuning tips, and per-client troubleshooting, see
+[docs/claude-integration.md](docs/claude-integration.md).
+
+### Claude Code (CLI + VS Code) — stdio
 
 ```bash
 claude mcp add local-rag -- uv --directory /path/to/local-rag run local-rag mcp
 ```
 
-### Claude Cowork
+Restart Claude Code; the three tools (`search`, `list_sources`,
+`index_status`) appear automatically.
 
-Cowork's connector layer only accepts **remote** MCP servers (HTTP / Streamable
-HTTP / SSE), not stdio. Run `local-rag` in HTTP mode in a terminal:
+### Claude Cowork (desktop) — HTTP
+
+Cowork only accepts remote MCP servers (HTTP), not stdio. Start the server:
 
 ```bash
 uv run local-rag mcp --transport http --port 8765
 ```
 
-Then in Cowork's MCP settings panel, add a new server with URL
-`http://127.0.0.1:8765/mcp`.
+…then in Cowork's MCP settings, add a server with URL
+`http://127.0.0.1:8765/mcp`. Loopback-only by default; binding off-loopback
+requires `--token` (see [docs/claude-integration.md](docs/claude-integration.md#claude-cowork-desktop)).
+For "always on" via `launchd`, see [docs/deployment.md](docs/deployment.md).
 
-By default the server binds to `127.0.0.1` only — reachable from Cowork on the
-same Mac, not from the network. If you need to bind to a non-loopback address
-(e.g. for a Mac mini server on your LAN), a bearer token is required:
+### Claude.ai (web) — not recommended
 
-```bash
-export LOCAL_RAG_MCP_TOKEN="$(openssl rand -hex 32)"
-uv run local-rag mcp --transport http --host 0.0.0.0 --port 8765
-```
-
-Then configure Cowork to send `Authorization: Bearer $LOCAL_RAG_MCP_TOKEN` on
-every request. Refusing to bind unauthenticated off-loopback is intentional —
-without auth, anyone on the network could read everything you've indexed.
-
-Once registered, the three tools (`search`, `list_sources`, `index_status`)
-appear in Claude's tool list automatically; the model decides when to call
-them based on the conversation.
+Web Claude accepts only public-internet MCP URLs, so making local-rag work
+there means tunneling your vault through a third-party provider — directly
+at odds with the project's privacy-first design. See
+[docs/claude-integration.md](docs/claude-integration.md#claudeai-web) for
+the full rationale and the Projects-as-alternative trade-off.
 
 ## Running it on a schedule or in the background
 
