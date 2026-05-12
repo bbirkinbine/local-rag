@@ -1,6 +1,6 @@
 # local-rag — Local Semantic Search over Vault + Source Repos
 
-A small Python project that indexes my Obsidian vault and selected GitHub repos into a local LanceDB store, embeds with Ollama (`nomic-embed-text`), and exposes search over MCP so both **Cowork** and **Claude Code in VS Code** can query notes + code semantically.
+A small Python project that indexes my Obsidian vault and selected GitHub repos into a local LanceDB store, embeds with Ollama (`bge-m3`), and exposes search over MCP so both **Cowork** and **Claude Code in VS Code** can query notes + code semantically.
 
 ## Problem
 
@@ -16,17 +16,22 @@ A local vector index addresses both: one MCP-callable search across vault and co
 | Decision | Choice | Why |
 |---|---|---|
 | Vector store | LanceDB | Multi-corpus (one table per source) cleanly; PyArrow-native; future room for code + screenshots + PDFs in one store. sqlite-vec was the close runner-up but doesn't scale as cleanly past one or two corpora. |
-| Embeddings | Ollama `nomic-embed-text` (768-dim, local) | Free, private, works for both prose and code. No API key, no quota. |
-| Distance metric | Cosine | nomic-embed output is normalized; cosine matches RAG conventions. |
+| Embeddings | Ollama `bge-m3` (1024-dim, local) | Strong on retrieval benchmarks, 8192-token context, multilingual, normalized output. Picked over `nomic-embed-text` because the target hardware (96 GB unified RAM Apple Silicon) is not memory-constrained — smallest competent model would leave recall quality on the table. Verify normalization with a one-shot `np.linalg.norm(v) ≈ 1.0` assertion on first run. |
+| Distance metric | Cosine | bge-m3 output is L2-normalized; cosine matches RAG conventions. |
 | Source selection | Config-driven allowlist | Each `[[sources]]` block names exactly one path. Third-party clones under `~/Downloads/src/` stay invisible unless explicitly added. No folder reorg required. |
 | MCP transport | stdio | Works for both Cowork (Cowork MCP settings) and Claude Code (`claude mcp add`). |
 | Re-indexing | On-demand CLI, incremental via SHA-256 file hash | Watcher can come later. Manual re-index = no surprise CPU/embedding load. |
 | Project layout | `pyproject.toml` + `src/local_rag/`, structured for GitHub | Matches repo → clone → populate workflow. |
+| Markdown chunking | Header-aware (split on `^#+ `, attach the heading hierarchy as `heading_path`) | Better recall than line-window for prose; populates the schema's `heading_path` field meaningfully; cheap to implement. |
+| Code chunking | Line-window (~60 lines, 10 overlap) | v1 only — tree-sitter / function-level chunking is the right v2 move (especially for Python), deferred to keep the dep footprint thin. |
+| Markdown preprocessing | Strip YAML frontmatter before chunking | Frontmatter (tags, `created:`, `cowork-authored:` etc.) is metadata noise that pollutes vector clustering. Drop everything between the leading `---` fences. |
+| Hybrid search | BM25 (LanceDB Tantivy FTS) **+** vector, fused at query time | Pure vector misses exact-term queries (function names, `[[wikilink]]` targets, project codenames) — these are the *first* things the user will search for. Tantivy FTS ships with LanceDB; turning it on is ~5 lines. Combine via reciprocal-rank fusion or weighted score over top-k from each. |
+| Embedding API | Ollama `/api/embed` (batch input) | 5–20× faster than per-call `/api/embeddings` for first-run indexing of a real vault. |
 
 ## Decisions (deferred / open questions)
 
-- **Code chunking:** v1 = line-based windows (~60 lines, 10 overlap). Tree-sitter for function-level chunking is the right v2 move, especially for Python. Skipped now to keep dep footprint thin.
-- **Hybrid search (BM25 + vector):** LanceDB has Tantivy FTS built in. Worth adding once vector-only retrieval shows recall gaps for exact-term queries (project names, function names, `[[wikilink]]` targets).
+- **Tree-sitter code chunking:** function-level chunking (especially for Python) is a meaningful v2 win. Skipped in v1 to keep dep footprint thin.
+- **Cross-encoder reranker** (e.g., `bge-reranker-v2-m3` on top-50 → top-10): only worth adding once hybrid retrieval recall is the bottleneck. Measure first.
 - **Reindex trigger:** start manual. If I run it multiple times a day, add a watch mode using `watchdog`.
 - **Per-repo query scoping defaults:** `search(query, sources=["vault","homelab"])` already supported. VS Code Claude Code may want a smarter default ("if I'm in repo X, prioritize that source"). Defer until usage tells us.
 
@@ -52,9 +57,9 @@ db_path = "~/.local/share/local-rag/db"
 
 [embedding]
 provider = "ollama"
-model = "nomic-embed-text"
+model = "bge-m3"
 url = "http://localhost:11434"
-dim = 768
+dim = 1024
 
 [[sources]]
 name = "vault"

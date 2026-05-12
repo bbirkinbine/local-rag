@@ -1,12 +1,12 @@
 # Project: local-rag
 
-A small Python tool that indexes the Obsidian vault and selected source repos into a local LanceDB store, embeds with Ollama `nomic-embed-text`, and exposes semantic search over MCP (stdio) so both Cowork and Claude Code in VS Code can query notes + code together. Privacy-first: no cloud APIs, no API keys, no quotas. The full spec lives at `docs/specs/local-rag.md`.
+A small Python tool that indexes the Obsidian vault and selected source repos into a local LanceDB store, embeds with Ollama `bge-m3`, and exposes semantic search over MCP (stdio) so both Cowork and Claude Code in VS Code can query notes + code together. Privacy-first: no cloud APIs, no API keys, no quotas. The full spec lives at `docs/specs/local-rag.md`.
 
 ## Stack
 
 - Python 3.12 (managed by `uv`)
 - LanceDB (one table per source; PyArrow-native; brute-force scan in v1)
-- Ollama via HTTP (`httpx`) — `nomic-embed-text` for embeddings (768-dim, cosine)
+- Ollama via HTTP (`httpx`) — `bge-m3` for embeddings (1024-dim, cosine; batch via `/api/embed`)
 - MCP Python SDK (stdio server)
 - `structlog` for logging; `tomllib` (stdlib) for config
 - pytest + pytest-asyncio
