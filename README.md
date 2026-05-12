@@ -119,12 +119,12 @@ Restart Claude Code; the three tools (`search`, `list_sources`,
 ### Claude Cowork (desktop) — HTTPS
 
 Cowork only accepts remote MCP servers (HTTPS, not stdio, not plain HTTP).
-You'll need a locally-trusted cert; [mkcert](https://github.com/FiloSottile/mkcert)
-gets you one in three commands:
+Set up a locally-trusted cert via [`mkcert`](https://github.com/FiloSottile/mkcert)
+— full walkthrough in [docs/tls-setup.md](docs/tls-setup.md). One-time:
 
 ```bash
-brew install mkcert
-mkcert -install
+brew install mkcert && mkcert -install
+mkdir -p ~/.config/local-rag && cd $_
 mkcert localhost 127.0.0.1 ::1     # writes localhost+2.pem and localhost+2-key.pem
 ```
 
@@ -132,7 +132,8 @@ Start the server with TLS:
 
 ```bash
 uv run local-rag mcp --transport http --port 8765 \
-  --cert ./localhost+2.pem --key ./localhost+2-key.pem
+  --cert ~/.config/local-rag/localhost+2.pem \
+  --key  ~/.config/local-rag/localhost+2-key.pem
 ```
 
 …then in Cowork's MCP settings, add a server with URL

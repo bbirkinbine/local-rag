@@ -67,14 +67,15 @@ point Cowork at the URL.
 ### Setup
 
 Cowork requires `https://` URLs even for loopback — it rejects plain
-HTTP. You need a locally-trusted TLS cert. [`mkcert`](https://github.com/FiloSottile/mkcert)
-is the standard pick:
+HTTP. You'll need a locally-trusted TLS cert; see
+[tls-setup.md](tls-setup.md) for the full mkcert walkthrough, cert
+rotation, and verification commands. Quick version:
 
 ```bash
 brew install mkcert
-mkcert -install                              # one-time: trust the local CA
-cd ~/.config/local-rag                       # or anywhere you'll keep the cert
-mkcert localhost 127.0.0.1 ::1               # produces localhost+2.pem + localhost+2-key.pem
+mkcert -install
+mkdir -p ~/.config/local-rag && cd $_
+mkcert localhost 127.0.0.1 ::1
 ```
 
 **1. Run the server with TLS.** For a quick test:

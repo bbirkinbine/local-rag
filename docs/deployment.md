@@ -112,17 +112,17 @@ lsof -i :8765                  # find PID
 kill <PID>
 ```
 
-### TLS for Cowork (mkcert)
+### TLS for Cowork
 
 Cowork requires `https://` URLs; the rest of this section assumes you've
-already issued a local cert. One-time setup:
+already issued a local cert. See [tls-setup.md](tls-setup.md) for the
+full walkthrough (mkcert, file permissions, rotation, openssl fallback,
+verification, troubleshooting). The short version:
 
 ```bash
-brew install mkcert
-mkcert -install                              # trust mkcert's local CA in keychain
-mkdir -p ~/.config/local-rag
-cd ~/.config/local-rag
-mkcert localhost 127.0.0.1 ::1               # writes localhost+2.pem + localhost+2-key.pem
+brew install mkcert && mkcert -install
+mkdir -p ~/.config/local-rag && cd $_
+mkcert localhost 127.0.0.1 ::1     # writes localhost+2.pem and localhost+2-key.pem
 ```
 
 Pass `--cert` and `--key` to any `local-rag mcp --transport http` invocation
