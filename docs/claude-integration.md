@@ -66,10 +66,23 @@ point Cowork at the URL.
 
 ### Setup
 
-**1. Run the server.** For a quick test:
+Cowork requires `https://` URLs even for loopback — it rejects plain
+HTTP. You need a locally-trusted TLS cert. [`mkcert`](https://github.com/FiloSottile/mkcert)
+is the standard pick:
 
 ```bash
-uv run local-rag mcp --transport http --port 8765
+brew install mkcert
+mkcert -install                              # one-time: trust the local CA
+cd ~/.config/local-rag                       # or anywhere you'll keep the cert
+mkcert localhost 127.0.0.1 ::1               # produces localhost+2.pem + localhost+2-key.pem
+```
+
+**1. Run the server with TLS.** For a quick test:
+
+```bash
+uv run local-rag mcp --transport http --port 8765 \
+  --cert ~/.config/local-rag/localhost+2.pem \
+  --key  ~/.config/local-rag/localhost+2-key.pem
 ```
 
 For "always-on" (recommended), see
@@ -81,7 +94,7 @@ crash.
 your build — usually Settings → MCP / Connectors → Add custom server)
 takes:
 
-- **URL**: `http://127.0.0.1:8765/mcp`
+- **URL**: `https://localhost:8765/mcp`
 - **Auth**: none required for the loopback default
 
 **3. Restart Cowork** so the new connector is loaded.

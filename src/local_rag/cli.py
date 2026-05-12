@@ -157,6 +157,29 @@ def _cmd_search(
     return 0
 
 
+def _validate_tls_args(
+    cert: Path | None, key: Path | None
+) -> tuple[Path | None, Path | None, str | None]:
+    """Validate the TLS pair. Returns (cert, key, error_message_or_None).
+
+    - Both None → plain HTTP. (None, None, None)
+    - Exactly one set → error: must be paired.
+    - Both set, but a file is missing/unreadable → error.
+    - Both set and readable → (cert, key, None).
+    """
+    if cert is None and key is None:
+        return None, None, None
+    if cert is None:
+        return None, None, "--key requires --cert (the two flags must be paired)"
+    if key is None:
+        return None, None, "--cert requires --key (the two flags must be paired)"
+    if not cert.is_file():
+        return None, None, f"--cert file does not exist or is not a regular file: {cert}"
+    if not key.is_file():
+        return None, None, f"--key file does not exist or is not a regular file: {key}"
+    return cert, key, None
+
+
 def _is_loopback_host(host: str) -> bool:
     """True for ``localhost`` and any literal IPv4/IPv6 loopback address.
 
@@ -181,11 +204,18 @@ def _cmd_mcp(config: Config, store: Store, args: argparse.Namespace) -> int:
                 "set --token or $LOCAL_RAG_MCP_TOKEN, or bind to 127.0.0.1"
             )
             return 2
+
+        cert_file, key_file, tls_error = _validate_tls_args(args.cert, args.key)
+        if tls_error is not None:
+            _err(tls_error)
+            return 2
+
         try:
             embedder = _build_embedder(config)
             run_http(
                 config, store, embedder,
                 host=args.host, port=args.port, token=token,
+                cert_file=cert_file, key_file=key_file,
             )
         except EmbedderError as e:
             _err(f"embedder unreachable: {e}")
@@ -278,6 +308,14 @@ def _build_parser() -> argparse.ArgumentParser:
             "bearer token required on every HTTP request; falls back to "
             "$LOCAL_RAG_MCP_TOKEN. Required when --host is not loopback."
         ),
+    )
+    p_mcp.add_argument(
+        "--cert", type=Path, default=None,
+        help="TLS certificate file (PEM); requires --key. Enables HTTPS.",
+    )
+    p_mcp.add_argument(
+        "--key", type=Path, default=None,
+        help="TLS private key file (PEM); requires --cert.",
     )
 
     return parser

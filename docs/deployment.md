@@ -112,6 +112,23 @@ lsof -i :8765                  # find PID
 kill <PID>
 ```
 
+### TLS for Cowork (mkcert)
+
+Cowork requires `https://` URLs; the rest of this section assumes you've
+already issued a local cert. One-time setup:
+
+```bash
+brew install mkcert
+mkcert -install                              # trust mkcert's local CA in keychain
+mkdir -p ~/.config/local-rag
+cd ~/.config/local-rag
+mkcert localhost 127.0.0.1 ::1               # writes localhost+2.pem + localhost+2-key.pem
+```
+
+Pass `--cert` and `--key` to any `local-rag mcp --transport http` invocation
+below. Plain HTTP (no cert/key) still works for Claude Code stdio
+fallback or other clients that don't require TLS.
+
 ### Option 2 — launchd (recommended; survives reboot, auto-restarts)
 
 Save as `~/Library/LaunchAgents/com.bbirkinbine.local-rag-mcp.plist`:
@@ -131,6 +148,9 @@ Save as `~/Library/LaunchAgents/com.bbirkinbine.local-rag-mcp.plist`:
         <string>mcp</string>
         <string>--transport</string><string>http</string>
         <string>--port</string><string>8765</string>
+        <!-- TLS (required for Cowork; remove this block for plain HTTP) -->
+        <string>--cert</string><string>/Users/brian.birkinbine/.config/local-rag/localhost+2.pem</string>
+        <string>--key</string><string>/Users/brian.birkinbine/.config/local-rag/localhost+2-key.pem</string>
     </array>
 
     <key>WorkingDirectory</key>

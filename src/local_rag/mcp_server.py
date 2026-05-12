@@ -17,6 +17,7 @@ import hashlib
 import hmac
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol, TypedDict, cast
 
 import structlog
@@ -179,6 +180,8 @@ def run_http(
     host: str = "127.0.0.1",
     port: int = 8765,
     token: str | None = None,
+    cert_file: Path | None = None,
+    key_file: Path | None = None,
 ) -> None:
     """Start the MCP server over Streamable HTTP. Blocks until SIGINT/SIGTERM.
 
@@ -186,6 +189,10 @@ def run_http(
     before we open the port). If ``token`` is provided, every incoming
     request must carry ``Authorization: Bearer <token>`` or it receives
     a 401. Token comparison is constant-time via :func:`hmac.compare_digest`.
+
+    If both ``cert_file`` and ``key_file`` are provided, uvicorn binds with
+    TLS and the server is reachable over ``https://``. Caller is responsible
+    for validating the files exist and are readable; we don't double-check.
     """
     embedder.health_check()
     tools = build_tools(
@@ -199,14 +206,24 @@ def run_http(
     app: _ASGIApp = cast(_ASGIApp, server.streamable_http_app())
     if token:
         app = _bearer_auth_middleware(app, token)
+    tls = cert_file is not None and key_file is not None
     log.info(
         "mcp.http.starting",
         host=host,
         port=port,
         token_required=token is not None,
+        tls=tls,
+        # key path deliberately not logged
+        cert=str(cert_file) if cert_file else None,
         tools=["search", "list_sources", "index_status"],
     )
-    uvicorn.run(app, host=host, port=port, log_config=None)
+    if cert_file is not None and key_file is not None:
+        uvicorn.run(
+            app, host=host, port=port, log_config=None,
+            ssl_certfile=str(cert_file), ssl_keyfile=str(key_file),
+        )
+    else:
+        uvicorn.run(app, host=host, port=port, log_config=None)
 
 
 def _bearer_auth_middleware(app: _ASGIApp, token: str) -> _ASGIApp:

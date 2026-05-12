@@ -362,6 +362,7 @@ def test_mcp_http_transport_dispatches_to_run_http(
     def fake_run_http(
         config: object, store: object, embedder: object,
         *, host: str, port: int, token: str | None,
+        **_kwargs: object,
     ) -> None:
         captured["host"] = host
         captured["port"] = port
@@ -388,6 +389,7 @@ def test_mcp_http_flags_override_defaults(
     def fake_run_http(
         config: object, store: object, embedder: object,
         *, host: str, port: int, token: str | None,
+        **_kwargs: object,
     ) -> None:
         captured.update({"host": host, "port": port, "token": token})
 
@@ -418,6 +420,7 @@ def test_mcp_http_token_env_var_used_when_flag_absent(
     def fake_run_http(
         config: object, store: object, embedder: object,
         *, host: str, port: int, token: str | None,
+        **_kwargs: object,
     ) -> None:
         captured["token"] = token
 
@@ -472,6 +475,7 @@ def test_mcp_http_ipv6_loopback_recognized_as_loopback(
     def fake_run_http(
         config: object, store: object, embedder: object,
         *, host: str, port: int, token: str | None,
+        **_kwargs: object,
     ) -> None:
         del config, store, embedder, port, token
         seen_hosts.append(host)
@@ -501,6 +505,7 @@ def test_mcp_http_nonloopback_with_token_is_allowed(
     def fake_run_http(
         config: object, store: object, embedder: object,
         *, host: str, port: int, token: str | None,
+        **_kwargs: object,
     ) -> None:
         captured["host"] = host
         captured["token"] = token
@@ -516,6 +521,171 @@ def test_mcp_http_nonloopback_with_token_is_allowed(
 
     assert rc == 0
     assert captured == {"host": "0.0.0.0", "token": "T"}
+
+
+def test_mcp_http_tls_flags_pass_through(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_embedder: FakeEmbedder,
+) -> None:
+    del patch_embedder
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+    cert = tmp_path / "cert.pem"
+    cert.write_text("--- fake cert ---\n")
+    key = tmp_path / "key.pem"
+    key.write_text("--- fake key ---\n")
+
+    captured: dict[str, object] = {}
+
+    def fake_run_http(
+        config: object, store: object, embedder: object,
+        *, host: str, port: int, token: str | None,
+        cert_file: object, key_file: object,
+    ) -> None:
+        captured["cert_file"] = cert_file
+        captured["key_file"] = key_file
+        del config, store, embedder, host, port, token
+
+    monkeypatch.setattr(cli, "run_http", fake_run_http)
+
+    rc = cli.main(
+        [
+            "--config", str(cfg), "mcp", "--transport", "http",
+            "--cert", str(cert), "--key", str(key),
+        ]
+    )
+
+    assert rc == 0
+    assert captured["cert_file"] == cert
+    assert captured["key_file"] == key
+
+
+def test_mcp_http_without_tls_flags_passes_none(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_embedder: FakeEmbedder,
+) -> None:
+    """No --cert/--key → run_http gets None for both (plain HTTP, unchanged)."""
+    del patch_embedder
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+
+    captured: dict[str, object] = {}
+
+    def fake_run_http(
+        config: object, store: object, embedder: object,
+        *, host: str, port: int, token: str | None,
+        cert_file: object, key_file: object,
+    ) -> None:
+        captured["cert_file"] = cert_file
+        captured["key_file"] = key_file
+        del config, store, embedder, host, port, token
+
+    monkeypatch.setattr(cli, "run_http", fake_run_http)
+
+    rc = cli.main(["--config", str(cfg), "mcp", "--transport", "http"])
+
+    assert rc == 0
+    assert captured == {"cert_file": None, "key_file": None}
+
+
+def test_mcp_http_cert_without_key_exits_two(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_embedder: FakeEmbedder,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    del patch_embedder
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+    cert = tmp_path / "cert.pem"
+    cert.write_text("x\n")
+
+    called = {"hit": False}
+
+    def fake_run_http(*args: object, **kwargs: object) -> None:
+        called["hit"] = True
+
+    monkeypatch.setattr(cli, "run_http", fake_run_http)
+
+    rc = cli.main(
+        ["--config", str(cfg), "mcp", "--transport", "http", "--cert", str(cert)]
+    )
+
+    assert rc == 2
+    assert called["hit"] is False
+    err = capsys.readouterr().err
+    assert "key" in err.lower() or "cert" in err.lower()
+
+
+def test_mcp_http_key_without_cert_exits_two(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_embedder: FakeEmbedder,
+) -> None:
+    del patch_embedder
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+    key = tmp_path / "key.pem"
+    key.write_text("x\n")
+
+    monkeypatch.setattr(cli, "run_http", lambda *a, **kw: None)
+
+    rc = cli.main(
+        ["--config", str(cfg), "mcp", "--transport", "http", "--key", str(key)]
+    )
+
+    assert rc == 2
+
+
+def test_mcp_http_missing_cert_file_exits_two(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_embedder: FakeEmbedder,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    del patch_embedder
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+    key = tmp_path / "key.pem"
+    key.write_text("x\n")
+
+    monkeypatch.setattr(cli, "run_http", lambda *a, **kw: None)
+
+    rc = cli.main(
+        [
+            "--config", str(cfg), "mcp", "--transport", "http",
+            "--cert", str(tmp_path / "nope.pem"), "--key", str(key),
+        ]
+    )
+
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "cert" in err.lower() and ("not found" in err.lower() or "exist" in err.lower())
+
+
+def test_mcp_http_missing_key_file_exits_two(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    patch_embedder: FakeEmbedder,
+) -> None:
+    del patch_embedder
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+    cert = tmp_path / "cert.pem"
+    cert.write_text("x\n")
+
+    monkeypatch.setattr(cli, "run_http", lambda *a, **kw: None)
+
+    rc = cli.main(
+        [
+            "--config", str(cfg), "mcp", "--transport", "http",
+            "--cert", str(cert), "--key", str(tmp_path / "nope.pem"),
+        ]
+    )
+
+    assert rc == 2
 
 
 def test_mcp_stdio_transport_still_default(

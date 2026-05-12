@@ -116,18 +116,31 @@ claude mcp add local-rag -- uv --directory /path/to/local-rag run local-rag mcp
 Restart Claude Code; the three tools (`search`, `list_sources`,
 `index_status`) appear automatically.
 
-### Claude Cowork (desktop) — HTTP
+### Claude Cowork (desktop) — HTTPS
 
-Cowork only accepts remote MCP servers (HTTP), not stdio. Start the server:
+Cowork only accepts remote MCP servers (HTTPS, not stdio, not plain HTTP).
+You'll need a locally-trusted cert; [mkcert](https://github.com/FiloSottile/mkcert)
+gets you one in three commands:
 
 ```bash
-uv run local-rag mcp --transport http --port 8765
+brew install mkcert
+mkcert -install
+mkcert localhost 127.0.0.1 ::1     # writes localhost+2.pem and localhost+2-key.pem
+```
+
+Start the server with TLS:
+
+```bash
+uv run local-rag mcp --transport http --port 8765 \
+  --cert ./localhost+2.pem --key ./localhost+2-key.pem
 ```
 
 …then in Cowork's MCP settings, add a server with URL
-`http://127.0.0.1:8765/mcp`. Loopback-only by default; binding off-loopback
-requires `--token` (see [docs/claude-integration.md](docs/claude-integration.md#claude-cowork-desktop)).
-For "always on" via `launchd`, see [docs/deployment.md](docs/deployment.md).
+`https://localhost:8765/mcp`. Loopback-only by default; binding off-loopback
+requires `--token` (see
+[docs/claude-integration.md](docs/claude-integration.md#claude-cowork-desktop)).
+For "always on" via `launchd` (with the cert wired into the plist), see
+[docs/deployment.md](docs/deployment.md).
 
 ### Claude.ai (web) — not recommended
 
