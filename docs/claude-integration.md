@@ -219,6 +219,15 @@ The server died or wasn't running when Cowork tried to reconnect. Check
 `~/.local/state/local-rag/http.log` (if you used the launchd setup from
 [deployment.md](deployment.md)) for the underlying error.
 
+**Cowork: "failed to add" or "connection error" even though `curl`
+against the same URL succeeds** — Cowork's TLS validation is stricter
+than `curl`'s. mkcert certs aren't in Certificate Transparency logs,
+which macOS App Transport Security can reject before any socket opens.
+See [tls-setup.md → "Cowork rejects the connection even though `curl`
+works"](tls-setup.md#cowork-rejects-the-connection-even-though-curl-works)
+for the full diagnostic ladder (tcpdump, unified log inspection, IPv6
+binding, Tailscale Serve as the real-cert workaround).
+
 **Cowork: tools register but every call returns "embedder unreachable"
 — Ollama isn't running on the URL in your config, or doesn't have
 `bge-m3` pulled. `ollama list` and `curl

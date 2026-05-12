@@ -240,6 +240,187 @@ delete any stale entries, then restart Safari.
 
 ---
 
+## Cowork rejects the connection even though `curl` works
+
+This is its own beast — Claude Cowork (and similarly strict MCP clients)
+sometimes refuse a connection that `curl` happily accepts. The list
+below is the diagnostic ladder in order of cheapest-to-most-involved.
+Work down it; the failure mode usually reveals itself by step 3 or 4.
+
+### 1. Confirm the server itself is healthy
+
+```bash
+curl -v --cacert "$(mkcert -CAROOT)/rootCA.pem" https://localhost:8765/mcp \
+  -H 'Accept: application/json,text/event-stream' \
+  -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' 2>&1 | head -25
+```
+
+You want to see `* TLSv1.3 (IN), TLS handshake, Finished (20)` or similar
+— meaning the cert chain validates and the handshake completes. If this
+fails, fix the server before touching Cowork.
+
+### 2. Watch for connection attempts at the network layer
+
+In a separate terminal:
+
+```bash
+sudo tcpdump -ni lo0 'tcp port 8765'
+```
+
+Then attempt the connection in Cowork. Three outcomes tell you different
+things:
+
+- **No packets at all.** Cowork is rejecting the URL *before* opening a
+  socket — typically App Transport Security (ATS) failing client-side
+  on cert validation rules that go beyond keychain trust (e.g.,
+  Certificate Transparency log enforcement; see step 5).
+- **TCP SYN but no SYN-ACK reply.** The server isn't listening on the
+  address Cowork is trying. Most often: IPv6 mismatch (step 4).
+- **Full TLS handshake then RST/FIN.** Cowork reached the server but
+  rejected the cert at a layer above the handshake — could be EKU
+  checks, pinned root mismatch, or an internal Electron CA store
+  ignoring the system keychain.
+
+### 3. Check Cowork's actual error from the macOS unified log
+
+```bash
+log show --last 2m \
+  --predicate 'process CONTAINS[c] "Claude" OR process CONTAINS[c] "Cowork"' \
+  --info 2>/dev/null \
+  | grep -iE 'tls|cert|secur|trust|ats|nsurl' | head -30
+```
+
+You may need `sudo` for some predicates. Common error fragments:
+
+- `"NSURLErrorDomain Code=-1202"` — cert trust failure.
+- `"is not CT qualified"` — Certificate Transparency rejection (mkcert
+  certs are never CT-logged; see step 5).
+- `"App Transport Security has blocked"` — ATS, period.
+- `"hostname mismatch"` — SAN list doesn't include the URL hostname;
+  re-issue with `mkcert <hostname> ...`.
+
+### 4. IPv6 vs IPv4 binding mismatch
+
+uvicorn bound to `127.0.0.1` listens on IPv4 only. `localhost` resolves
+to *both* `::1` (IPv6) *and* `127.0.0.1` — and most macOS apps try IPv6
+first. If the IPv6 connect fails fast, some clients give up rather than
+fall back. Test:
+
+```bash
+# Same server but bound to IPv6 loopback:
+uv run local-rag mcp --transport http --host ::1 --port 8765 \
+  --cert ~/.config/local-rag/localhost+2.pem \
+  --key  ~/.config/local-rag/localhost+2-key.pem
+```
+
+In Cowork, change the connector URL to `https://[::1]:8765/mcp`. The
+mkcert SAN list includes `::1`, so the cert still validates.
+
+If switching to IPv6 *also* fails, IPv6 isn't the problem — move on.
+
+### 5. Certificate Transparency (ATS strictness)
+
+Recent macOS versions enforce Certificate Transparency for ATS: the
+cert must appear in a public CT log to be considered valid. mkcert
+certs are issued by a local CA and **never appear in CT logs**, so any
+client that strictly enforces CT will reject them even though the CA
+is keychain-trusted. This shows up in step 2 as "no packets" — the
+rejection happens before the socket opens.
+
+You can't make mkcert certs CT-compliant; only real CA-issued certs
+qualify. If this is the failure mode, you have two practical paths:
+
+#### A. Tailscale Serve (recommended, if you have Tailscale)
+
+`tailscale serve` proxies a local port through your tailnet with a real
+Let's Encrypt cert on a `<machine>.<tailnet>.ts.net` URL. The cert is
+CT-logged (satisfies ATS); the traffic stays on your tailnet (no third
+party reads it); setup is ~1 command:
+
+```bash
+tailscale serve --https=443 --bg http://127.0.0.1:8765
+```
+
+Then point Cowork at `https://<machine>.<tailnet>.ts.net/mcp` (use
+`tailscale status` to find the host name). The cert validates because
+Let's Encrypt is in the public trust chain, and it's CT-logged because
+Let's Encrypt publishes all issued certs.
+
+Caveat: `tailscale serve` proxies the connection through the local
+tailscaled process; the proxy terminates TLS at Tailscale's side, then
+hits your local port over plain HTTP. That's fine because the plain-HTTP
+hop never leaves the loopback interface — but it does mean `local-rag`
+runs with `--transport http` and **no** `--cert`/`--key` flags when
+fronted by Tailscale Serve.
+
+#### B. Caddy reverse proxy with a tailnet cert (or your own domain)
+
+If you'd rather keep `local-rag` serving TLS directly (e.g., to use the
+bearer-token guard for non-loopback binds), put Caddy in front:
+
+```caddyfile
+mybox.example.com {
+    reverse_proxy 127.0.0.1:8765
+}
+```
+
+Caddy auto-issues a Let's Encrypt cert via ACME for any real domain you
+control, including Tailscale's `ts.net` domains with the right
+configuration. Heavier than Tailscale Serve, but more flexible.
+
+#### Don't bother
+
+- **Cloudflare Tunnel / ngrok.** They provide ATS-compliant TLS, but the
+  tunnel provider sees your traffic. Hard contradiction with the
+  project's "no cloud APIs, no telemetry" rule.
+- **Real CA + DNS challenge for `localhost`.** Public CAs won't issue
+  certs for `localhost`; it'd require a real domain pointing at
+  `127.0.0.1`, which is more setup than option A.
+
+### 6. Electron's own cert store
+
+If Cowork is an Electron app and uses Chromium's network stack on macOS,
+it normally honors the system keychain. But some Electron builds
+override this with `app.commandLine.appendSwitch('ignore-certificate-errors-spki-list', ...)`
+or pin their own root CAs. There's nothing you can do from outside —
+your only signal is unified-log entries (step 3) mentioning
+`net::ERR_CERT_AUTHORITY_INVALID` or similar net-error codes. If you
+see that, the only practical fix is option A above (use a publicly-
+trusted cert via Tailscale Serve).
+
+### 7. Confirm mkcert's CA is actually trusted at the system level
+
+```bash
+security verify-cert -c "$(mkcert -CAROOT)/rootCA.pem" 2>&1
+# Expected: "...is a valid certificate"
+
+security find-certificate -c "mkcert development CA" \
+  /Library/Keychains/System.keychain ~/Library/Keychains/login.keychain-db \
+  2>/dev/null | head -3
+# Expected: a certificate block
+```
+
+If `verify-cert` doesn't say "valid certificate," `mkcert -install` didn't
+complete. Re-run it (use `sudo` if prompted) and restart Cowork to pick
+up the trust change.
+
+### 8. Reissue the cert with explicit hostname coverage
+
+If you've been connecting via `https://localhost:8765` and your cert was
+issued with only `127.0.0.1` in the SAN list (or vice versa), some
+clients fail with a hostname mismatch. Re-issue covering both:
+
+```bash
+cd ~/.config/local-rag
+mkcert localhost 127.0.0.1 ::1
+```
+
+Then restart the server. The SAN list determines which URL hostnames
+the cert is valid for.
+
+---
+
 ## What we don't do
 
 Per the [slice-09 spec](specs/slice-09-https.md) non-goals:
