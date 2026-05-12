@@ -97,7 +97,8 @@ uv run local-rag index              # incremental reindex (SHA-256 file hashes)
 uv run local-rag index vault        # just one source
 uv run local-rag search "RRF tuning"
 uv run local-rag list               # source name + chunk count
-uv run local-rag mcp                # MCP server on stdio (for Claude clients)
+uv run local-rag mcp                # MCP server on stdio (default; for Claude Code)
+uv run local-rag mcp --transport http --port 8765   # HTTP server (for Cowork)
 ```
 
 ## Wire it into Claude
@@ -110,10 +111,28 @@ claude mcp add local-rag -- uv --directory /path/to/local-rag run local-rag mcp
 
 ### Claude Cowork
 
-In the Cowork MCP settings panel, add a new server:
+Cowork's connector layer only accepts **remote** MCP servers (HTTP / Streamable
+HTTP / SSE), not stdio. Run `local-rag` in HTTP mode in a terminal:
 
-- Command: `uv`
-- Args: `--directory /path/to/local-rag run local-rag mcp`
+```bash
+uv run local-rag mcp --transport http --port 8765
+```
+
+Then in Cowork's MCP settings panel, add a new server with URL
+`http://127.0.0.1:8765/mcp`.
+
+By default the server binds to `127.0.0.1` only — reachable from Cowork on the
+same Mac, not from the network. If you need to bind to a non-loopback address
+(e.g. for a Mac mini server on your LAN), a bearer token is required:
+
+```bash
+export LOCAL_RAG_MCP_TOKEN="$(openssl rand -hex 32)"
+uv run local-rag mcp --transport http --host 0.0.0.0 --port 8765
+```
+
+Then configure Cowork to send `Authorization: Bearer $LOCAL_RAG_MCP_TOKEN` on
+every request. Refusing to bind unauthenticated off-loopback is intentional —
+without auth, anyone on the network could read everything you've indexed.
 
 Once registered, the three tools (`search`, `list_sources`, `index_status`)
 appear in Claude's tool list automatically; the model decides when to call
