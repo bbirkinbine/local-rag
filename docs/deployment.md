@@ -96,23 +96,7 @@ Only relevant if you're using `--transport http` (Cowork or any
 non-stdio MCP client). The stdio transport is short-lived and
 managed by the MCP client itself; nothing to do.
 
-### Option 1 — `nohup` (current session only)
-
-```bash
-mkdir -p ~/.local/state/local-rag
-nohup uv run local-rag mcp --transport http --port 8765 \
-  > ~/.local/state/local-rag/http.log 2>&1 &
-disown
-```
-
-Survives terminal close. Dies on reboot. Stop with:
-
-```bash
-lsof -i :8765                  # find PID
-kill <PID>
-```
-
-### TLS for Cowork
+### TLS for Cowork (applies to all three options below)
 
 Cowork requires `https://` URLs; the rest of this section assumes you've
 already issued a local cert. See [tls-setup.md](tls-setup.md) for the
@@ -126,8 +110,27 @@ mkcert localhost 127.0.0.1 ::1     # writes localhost+2.pem and localhost+2-key.
 ```
 
 Pass `--cert` and `--key` to any `local-rag mcp --transport http` invocation
-below. Plain HTTP (no cert/key) still works for Claude Code stdio
-fallback or other clients that don't require TLS.
+below. The examples assume the standard cert paths from `~/.config/local-rag/`.
+If you don't need TLS (Cowork isn't your target, you're just smoke-testing),
+drop the two flags — plain HTTP still works for clients that accept it.
+
+### Option 1 — `nohup` (current session only)
+
+```bash
+mkdir -p ~/.local/state/local-rag
+nohup uv run local-rag mcp --transport http --port 8765 \
+  --cert ~/.config/local-rag/localhost+2.pem \
+  --key  ~/.config/local-rag/localhost+2-key.pem \
+  > ~/.local/state/local-rag/http.log 2>&1 &
+disown
+```
+
+Survives terminal close. Dies on reboot. Stop with:
+
+```bash
+lsof -i :8765                  # find PID
+kill <PID>
+```
 
 ### Option 2 — launchd (recommended; survives reboot, auto-restarts)
 
@@ -215,7 +218,10 @@ token once with `openssl rand -hex 32`.
 If you already work in tmux:
 
 ```bash
-tmux new -d -s local-rag-mcp 'uv run local-rag mcp --transport http --port 8765'
+tmux new -d -s local-rag-mcp \
+  'uv run local-rag mcp --transport http --port 8765 \
+     --cert ~/.config/local-rag/localhost+2.pem \
+     --key  ~/.config/local-rag/localhost+2-key.pem'
 tmux attach -t local-rag-mcp           # see live output
 # Ctrl-b d to detach
 ```
