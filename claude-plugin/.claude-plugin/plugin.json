@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
+  "name": "local-rag",
+  "version": "0.1.0",
+  "description": "Local semantic + keyword search across your Obsidian vault and source repos. Stdio MCP server; no cloud APIs, no telemetry.",
+  "author": {
+    "name": "Brian Birkinbine",
+    "email": "585281+bbirkinbine@users.noreply.github.com"
+  },
+  "keywords": ["mcp", "rag", "search", "local", "obsidian", "lancedb", "ollama"],
+  "userConfig": {
+    "repo_path": {
+      "type": "directory",
+      "title": "local-rag clone path",
+      "description": "Absolute path to your local-rag repository (the folder containing pyproject.toml).",
+      "required": true
+    },
+    "uv_path": {
+      "type": "string",
+      "title": "uv binary path",
+      "description": "Path to the uv binary. Leave as 'uv' if it's on PATH. If Cowork can't find it (common when Cowork is launched from the GUI rather than a terminal), set to the absolute path — usually /opt/homebrew/bin/uv on Apple Silicon, /usr/local/bin/uv on Intel.",
+      "default": "uv"
+    }
+  }
+}

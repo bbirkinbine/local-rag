@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "local-rag": {
+      "command": "${user_config.uv_path}",
+      "args": [
+        "--directory",
+        "${user_config.repo_path}",
+        "run",
+        "local-rag",
+        "mcp"
+      ]
+    }
+  }
+}
