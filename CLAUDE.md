@@ -55,6 +55,13 @@ A small Python tool that indexes the Obsidian vault and selected source repos in
 - Next: implement in vertical slices via the agentic loop (planner → test-first → implement → reviewer). Proposed order: config/paths → embedder client → store → chunkers → indexer → CLI → MCP server.
 - `uv sync` not run yet — happens at the start of the first slice so the lockfile reflects an actual import graph.
 
+## Repository / publishing
+
+- **This is a public GitHub repo** (`github.com/bbirkinbine/local-rag`). Commit messages, PR descriptions, branch names, and code comments are all public — write them accordingly.
+- **Licensed MIT** (see `LICENSE`). Don't add per-file license headers; the top-level `LICENSE` covers everything.
+- **No `Co-Authored-By: Claude` (or any AI co-author) trailers** on commits or PRs. The top-level `README.md` already acknowledges AI tooling — that's the single source of attribution.
+- **No "Generated with Claude Code" footers** in PR bodies either.
+
 ## Style preferences
 
 - Be concise in PR descriptions and commit messages. No emoji unless I ask.

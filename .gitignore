@@ -12,3 +12,5 @@ build/
 .idea/
 .vscode/
 .claude/settings.local.json
+.env
+.env.*

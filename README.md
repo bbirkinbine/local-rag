@@ -1,13 +1,30 @@
 # local-rag
 
-[![AI-Assisted](https://img.shields.io/badge/AI--Assisted-Claude-7c3aed)](#acknowledgements)
-[![Python](https://img.shields.io/badge/python-3.12-blue)](https://www.python.org/)
-
 Local semantic + keyword search across your Obsidian vault and source repos,
 exposed to Claude Code and Cowork over the Model Context Protocol (MCP).
 
 No cloud APIs. No API keys. No telemetry. Everything — embeddings, vectors,
 queries — stays on your machine.
+
+> ## Status
+>
+> Published as a personal tool, not a managed product. Issues and PRs are
+> welcome but won't get fast turnaround. The
+> [`docs/`](docs/) tree — especially the full spec at
+> [`docs/specs/local-rag.md`](docs/specs/local-rag.md), the per-slice
+> implementation specs at [`docs/specs/slice-*.md`](docs/specs/), and the
+> client wiring guide at
+> [`docs/claude-integration.md`](docs/claude-integration.md) — is the part
+> most likely to be useful to others.
+>
+> **This repo is in-flight.** It is being built out slice-by-slice (config
+> → embedder → store → chunkers → indexer → CLI → MCP server → TLS →
+> Cowork plugin); the shape of [`src/local_rag/`](src/local_rag/), the
+> config schema, and the CLI/MCP surface are still settling as new
+> requirements surface. Anything called out as "shipped" in a per-slice
+> spec has been exercised end-to-end on a real vault + repo set; the rest
+> is subject to change without notice. Pin a specific commit if you depend
+> on a snapshot.
 
 ## Why
 
@@ -221,7 +238,7 @@ This project was developed with the assistance of AI tools.
 
 ## License
 
-TBD — choose and add a `LICENSE` file before making this public.
+[MIT](LICENSE).
 
 [LanceDB]: https://lancedb.github.io/lancedb/
 [Ollama]: https://ollama.com/

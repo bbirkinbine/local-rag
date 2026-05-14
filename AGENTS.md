@@ -12,10 +12,9 @@ section in the README.
 - The author drives every design and approval decision.
 - Claude (Anthropic) does implementation and code review under a documented
   spec → failing-tests → implement → independent-review → commit loop.
-- Each commit carries `Co-Authored-By: Claude` trailers so `git log` is the
-  audit trail.
-- Per-slice spec markdown in [`docs/specs/`](./docs/specs/) shows the trail
-  for every feature that landed.
+- Commits don't carry `Co-Authored-By: Claude` trailers; the per-slice spec
+  markdown in [`docs/specs/`](./docs/specs/) plus this file are the audit
+  trail for every feature that landed.
 
 ## The loop
 
@@ -105,7 +104,9 @@ artifacts are enough:
    diff against the spec.
 4. Read the reviewer's findings. You — not the agent — decide what's a
    blocker.
-5. Commit with `Co-Authored-By` trailers so the audit trail survives.
+5. Keep the spec file, failing-test output, and reviewer findings in the
+   repo (under `docs/specs/`) — those are the audit trail, not the
+   commit messages.
 
 ## Models used
 
@@ -116,6 +117,4 @@ artifacts are enough:
 
 ## License
 
-See [LICENSE](./LICENSE) once added. Until then, all rights reserved by
-the author. The AI's contributions are derivative work generated under
-the author's direction; per Anthropic's terms, the author owns the output.
+[MIT](./LICENSE).
