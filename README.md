@@ -9,22 +9,16 @@ queries — stays on your machine.
 > ## Status
 >
 > Published as a personal tool, not a managed product. Issues and PRs are
-> welcome but won't get fast turnaround. The
-> [`docs/`](docs/) tree — especially the full spec at
-> [`docs/specs/local-rag.md`](docs/specs/local-rag.md), the per-slice
-> implementation specs at [`docs/specs/slice-*.md`](docs/specs/), and the
-> client wiring guide at
-> [`docs/claude-integration.md`](docs/claude-integration.md) — is the part
-> most likely to be useful to others.
+> welcome but won't get fast turnaround. The [`docs/`](docs/) tree —
+> especially the full spec at
+> [`docs/specs/local-rag.md`](docs/specs/local-rag.md) and the client wiring
+> guide at [`docs/claude-integration.md`](docs/claude-integration.md) — is
+> the part most likely to be useful to others.
 >
-> **This repo is in-flight.** It is being built out slice-by-slice (config
-> → embedder → store → chunkers → indexer → CLI → MCP server → TLS →
-> Cowork plugin); the shape of [`src/local_rag/`](src/local_rag/), the
-> config schema, and the CLI/MCP surface are still settling as new
-> requirements surface. Anything called out as "shipped" in a per-slice
-> spec has been exercised end-to-end on a real vault + repo set; the rest
-> is subject to change without notice. Pin a specific commit if you depend
-> on a snapshot.
+> **This repo is in-flight.** The config schema, CLI flags, and MCP surface
+> are still settling. Open work is tracked in [`TODO.md`](TODO.md); per-slice
+> specs under [`docs/specs/`](docs/specs/) record what's been built. Pin a
+> specific commit if you depend on a snapshot.
 
 ## Why
 
@@ -56,10 +50,10 @@ The CLI also runs the same operations directly.
                                                                 - index_status
 ```
 
-One LanceDB table per configured source. Markdown chunks are header-aware
-(splits on `^#+ `, attaches a `/H1/H2/…` heading path). Code chunks are
-fixed line windows (~60 lines with 10-line overlap). Hybrid search fuses
-vector + BM25 results via Reciprocal Rank Fusion.
+One LanceDB table per configured source. Markdown chunks are header-aware;
+code chunks are fixed line windows. Hybrid search fuses vector + BM25
+results via Reciprocal Rank Fusion. Details and tunables live in the
+[spec](docs/specs/local-rag.md).
 
 ## Requirements
 
@@ -71,7 +65,7 @@ vector + BM25 results via Reciprocal Rank Fusion.
 ## Install
 
 ```bash
-git clone https://github.com/<your-user>/local-rag.git
+git clone https://github.com/bbirkinbine/local-rag.git
 cd local-rag
 uv sync
 ollama pull bge-m3
@@ -105,7 +99,9 @@ respect_gitignore = true
 
 Every source is opt-in. Third-party clones don't get indexed unless you add
 a `[[sources]]` block for them. Override the config path with
-`--config <path>` or the `LOCAL_RAG_CONFIG` env var.
+`--config <path>` or the `LOCAL_RAG_CONFIG` env var. The full key reference
+and indexing rules (extension allowlist, size cap, incremental hashing) are
+in the [spec](docs/specs/local-rag.md).
 
 ## Use it from the CLI
 
@@ -114,15 +110,10 @@ uv run local-rag index              # incremental reindex (SHA-256 file hashes)
 uv run local-rag index vault        # just one source
 uv run local-rag search "RRF tuning"
 uv run local-rag list               # source name + chunk count
-uv run local-rag mcp                # MCP server on stdio (default; for Claude Code)
-uv run local-rag mcp --transport http --port 8765   # HTTP server (for Cowork)
+uv run local-rag mcp                # MCP server on stdio
 ```
 
 ## Wire it into Claude
-
-Quick recipes below. For the full client matrix (including why claude.ai web
-isn't recommended), prompt-tuning tips, and per-client troubleshooting, see
-[docs/claude-integration.md](docs/claude-integration.md).
 
 ### Claude Code (CLI + VS Code) — stdio
 
@@ -133,104 +124,40 @@ claude mcp add local-rag -- uv --directory /path/to/local-rag run local-rag mcp
 Restart Claude Code; the three tools (`search`, `list_sources`,
 `index_status`) appear automatically.
 
-### Claude Cowork (desktop) — HTTPS
+### Claude Cowork (desktop)
 
-Cowork only accepts remote MCP servers (HTTPS, not stdio, not plain HTTP).
-Set up a locally-trusted cert via [`mkcert`](https://github.com/FiloSottile/mkcert)
-— full walkthrough in [docs/tls-setup.md](docs/tls-setup.md). One-time:
+Cowork wiring is in flight — see [`TODO.md`](TODO.md) for status. The
+in-progress plugin scaffolding lives under
+[`claude-plugin/`](claude-plugin/) and the spec is at
+[`docs/specs/slice-10-cowork-plugin.md`](docs/specs/slice-10-cowork-plugin.md).
 
-```bash
-brew install mkcert && mkcert -install
-mkdir -p ~/.config/local-rag && cd $_
-mkcert localhost 127.0.0.1 ::1     # writes localhost+2.pem and localhost+2-key.pem
-```
+### Claude.ai (web)
 
-Start the server with TLS:
-
-```bash
-uv run local-rag mcp --transport http --port 8765 \
-  --cert ~/.config/local-rag/localhost+2.pem \
-  --key  ~/.config/local-rag/localhost+2-key.pem
-```
-
-…then in Cowork's MCP settings, add a server with URL
-`https://localhost:8765/mcp`. Loopback-only by default; binding off-loopback
-requires `--token` (see
-[docs/claude-integration.md](docs/claude-integration.md#claude-cowork-desktop)).
-For "always on" via `launchd` (with the cert wired into the plist), see
-[docs/deployment.md](docs/deployment.md).
-
-### Claude.ai (web) — not recommended
-
-Web Claude accepts only public-internet MCP URLs, so making local-rag work
-there means tunneling your vault through a third-party provider — directly
-at odds with the project's privacy-first design. See
+Not recommended — web Claude only accepts public-internet MCP URLs, which
+would mean tunneling your vault through a third-party provider, directly at
+odds with the project's privacy-first design. See
 [docs/claude-integration.md](docs/claude-integration.md#claudeai-web) for
-the full rationale and the Projects-as-alternative trade-off.
+the rationale.
 
-## Running it on a schedule or in the background
+## Running it on a schedule
 
-For "always-on" setups (indexer firing every 30 min, HTTP server staying up
-across reboots), see [docs/deployment.md](docs/deployment.md). It covers
-cron and `launchd` for periodic indexing, plus `nohup` / `launchd` / `tmux`
-options for keeping the HTTP server running. The two processes are safe to
-run concurrently — LanceDB uses snapshot semantics, so the search server
-picks up newly-indexed rows on its next query without a restart.
-
-## Configuration reference
-
-| Key | Type | Notes |
-|---|---|---|
-| `db_path` | string | Where LanceDB stores its tables. Created if missing. |
-| `embedding.provider` | string | Only `"ollama"` is supported in v1. |
-| `embedding.model` | string | Must be pulled into Ollama (`ollama pull <model>`). |
-| `embedding.url` | string | Usually `http://localhost:11434`. |
-| `embedding.dim` | int | Vector dimension. Must match the model — `bge-m3` is 1024. |
-| `[[sources]].name` | string | Unique identifier; one LanceDB table per name. |
-| `[[sources]].path` | string | Source directory. `~` expands. Must exist. |
-| `[[sources]].type` | enum | `"markdown"` or `"code"`. Advisory only — the chunker dispatches by file extension. |
-| `[[sources]].ignore` | list[string] | gitignore-style globs (e.g. `.obsidian/**`). |
-| `[[sources]].respect_gitignore` | bool | If true, defer the walk to `git ls-files` in the source root. |
-
-## Indexing rules (v1)
-
-- **Extension allowlist**: `.md`, `.mdx`, `.txt`, `.rst`, `.py`, `.js`, `.jsx`,
-  `.ts`, `.tsx`, `.go`, `.rs`, `.toml`, `.yaml`, `.yml`, `.json`. Everything
-  else (binaries, images, lockfiles) is silently skipped.
-- **Size cap**: files ≥ 1 MB are skipped.
-- **Incremental**: SHA-256 of file contents is compared against the stored
-  hash. Unchanged files never re-hit the embedder.
-- **Orphan deletion**: files removed from disk get their chunks deleted on
-  the next index run.
-- **No vector index** (`create_index`) in v1 — brute-force scan is fine for
-  <100k chunks. Revisit when query latency crosses 500 ms.
+For "always-on" indexing (cron or `launchd` firing every 30 min) and other
+deployment notes, see [docs/deployment.md](docs/deployment.md). The indexer
+and any running MCP server are safe to run concurrently — LanceDB uses
+snapshot semantics.
 
 ## Development
 
 ```bash
-uv run pytest             # ~155 tests
+uv run pytest             # tests
 uv run ruff check .       # lint
 uv run ruff format .      # format
 uv run mypy src/          # strict type-check
 ```
 
-Source layout:
-
-```
-src/local_rag/
-  cli.py          # argparse + subcommand dispatch
-  config.py       # TOML loader + validation
-  paths.py        # canonical config-path resolution
-  embedder.py     # Ollama batch-embed client
-  chunkers.py     # markdown header-aware + code line-window
-  models.py       # Chunk, SearchHit (frozen dataclasses)
-  store.py        # LanceDB-backed store + hybrid search (RRF)
-  indexer.py      # walks a Source, syncs disk → store
-  mcp_server.py   # FastMCP wiring for the three tools
-```
-
-The full spec lives at [`docs/specs/local-rag.md`](docs/specs/local-rag.md).
-Per-slice implementation specs at [`docs/specs/slice-*.md`](docs/specs/).
+Source under [`src/local_rag/`](src/local_rag/); each module has a
+single-line module docstring describing its role. Full spec at
+[`docs/specs/local-rag.md`](docs/specs/local-rag.md).
 
 ## Acknowledgements
 
