@@ -205,15 +205,24 @@ def _print_index_summary(result: IndexResult) -> None:
 
 def _print_eval_report(report: EvalReport) -> None:
     for r in report.results:
-        if r.best_rank is not None:
+        if r.query.is_negative:
+            status = "neg-pass" if r.passed else "NEG-FAIL"
+            print(
+                f"{status}  {r.query.query!r}  max_cos={r.max_cosine or 0.0:.3f} "
+                f"(limit {r.query.expect_max_cosine:.2f})"
+            )
+        elif r.best_rank is not None:
             print(f"rank={r.best_rank}  {r.query.query!r}  hit={r.matched_path}")
         else:
             expected = ", ".join(r.query.expected_paths)
             print(f"rank=-  {r.query.query!r}  miss (expected: {expected})")
-    print(
+    summary = (
         f"recall@{report.k}={report.recall:.3f}  mrr={report.mrr:.3f}  "
-        f"queries={len(report.results)}"
+        f"queries={len(report.positives)}"
     )
+    if report.negatives_total:
+        summary += f"  negatives={report.negatives_passed}/{report.negatives_total}"
+    print(summary)
 
 
 def _print_hit(hit: SearchHit) -> None:

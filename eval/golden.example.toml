@@ -14,3 +14,9 @@ query = "example topic the note is about"
 expected_paths = [
   "notes/example-note.md",
 ]
+
+# Negative query: assert nothing relevant exists — the eval fails if any
+# hit reaches this cosine. Guards against score inflation.
+[[queries]]
+query = "topic with no coverage anywhere in the sources"
+expect_max_cosine = 0.55

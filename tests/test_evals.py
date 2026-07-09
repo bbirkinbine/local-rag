@@ -315,3 +315,112 @@ def test_eval_cmd_runs_health_check(tmp_path: Path, patch_embedder: FakeEmbedder
     cli.main(["--config", str(cfg), "eval", "--golden", str(golden)])
 
     assert patch_embedder.health_check_called is True
+
+
+# --------------------------------------------------------- negative queries
+
+
+def test_load_golden_queries_parses_negative_entry(tmp_path: Path) -> None:
+    golden = tmp_path / "golden.toml"
+    golden.write_text('[[queries]]\nquery = "nonsense"\nexpect_max_cosine = 0.5\n')
+
+    queries = load_golden_queries(golden)
+
+    assert queries[0].expected_paths == ()
+    assert queries[0].expect_max_cosine == 0.5
+    assert queries[0].is_negative
+
+
+def test_load_golden_queries_rejects_both_expectation_kinds(tmp_path: Path) -> None:
+    golden = tmp_path / "golden.toml"
+    golden.write_text(
+        '[[queries]]\nquery = "q"\nexpected_paths = ["a.md"]\nexpect_max_cosine = 0.5\n'
+    )
+
+    with pytest.raises(EvalError, match="not both"):
+        load_golden_queries(golden)
+
+
+def test_load_golden_queries_rejects_out_of_range_threshold(tmp_path: Path) -> None:
+    golden = tmp_path / "golden.toml"
+    golden.write_text('[[queries]]\nquery = "q"\nexpect_max_cosine = 1.5\n')
+
+    with pytest.raises(EvalError, match="expect_max_cosine"):
+        load_golden_queries(golden)
+
+
+def test_evaluate_negative_query_passes_when_all_hits_weak(tmp_path: Path) -> None:
+    store = Store(tmp_path / "db", vector_dim=DIM)
+    store.ensure_table("vault")
+    store.upsert_chunks(
+        "vault",
+        [_chunk("notes/a.md", 0, "some content", [1.0, 0.0, 0.0, 0.0])],
+    )
+    # Query vector orthogonal to everything indexed -> cosine ~0.
+    embedder = FixedVectorEmbedder([0.0, 1.0, 0.0, 0.0])
+    queries = [GoldenQuery(query="zzz", expected_paths=(), expect_max_cosine=0.5)]
+
+    report = evaluate(store, embedder, ["vault"], queries, k=5)
+
+    result = report.results[0]
+    assert result.passed is True
+    assert result.max_cosine == pytest.approx(0.0, abs=1e-4)
+
+
+def test_evaluate_negative_query_fails_on_strong_hit(tmp_path: Path) -> None:
+    store = Store(tmp_path / "db", vector_dim=DIM)
+    store.ensure_table("vault")
+    store.upsert_chunks(
+        "vault",
+        [_chunk("notes/a.md", 0, "some content", [1.0, 0.0, 0.0, 0.0])],
+    )
+    embedder = FixedVectorEmbedder([1.0, 0.0, 0.0, 0.0])  # cosine 1.0 hit exists
+    queries = [GoldenQuery(query="zzz", expected_paths=(), expect_max_cosine=0.5)]
+
+    report = evaluate(store, embedder, ["vault"], queries, k=5)
+
+    result = report.results[0]
+    assert result.passed is False
+    assert result.max_cosine == pytest.approx(1.0, abs=1e-4)
+
+
+def test_negative_queries_do_not_affect_recall_and_mrr(tmp_path: Path) -> None:
+    store = Store(tmp_path / "db", vector_dim=DIM)
+    store.ensure_table("vault")
+    store.upsert_chunks(
+        "vault",
+        [_chunk("notes/a.md", 0, "alpha content", [1.0, 0.0, 0.0, 0.0])],
+    )
+    embedder = FixedVectorEmbedder([1.0, 0.0, 0.0, 0.0])
+    queries = [
+        GoldenQuery(query="alpha content", expected_paths=("notes/a.md",)),
+        GoldenQuery(query="zzz", expected_paths=(), expect_max_cosine=0.5),  # fails
+    ]
+
+    report = evaluate(store, embedder, ["vault"], queries, k=5)
+
+    # recall/mrr computed over the one positive query only.
+    assert report.recall == 1.0
+    assert report.mrr == 1.0
+    assert report.negatives_total == 1
+    assert report.negatives_passed == 0
+
+
+def test_eval_cmd_reports_negative_summary(
+    tmp_path: Path, patch_embedder: FakeEmbedder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n\nquick brown fox\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+    golden = tmp_path / "golden.toml"
+    golden.write_text(
+        '[[queries]]\nquery = "quick brown fox"\nexpected_paths = ["a.md"]\n\n'
+        '[[queries]]\nquery = "unrelated nonsense"\nexpect_max_cosine = 0.5\n'
+    )
+    cli.main(["--config", str(cfg), "index"])
+    capsys.readouterr()
+
+    rc = cli.main(["--config", str(cfg), "eval", "--golden", str(golden)])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "negatives=" in out
