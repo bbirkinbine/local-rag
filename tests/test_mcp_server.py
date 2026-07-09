@@ -115,6 +115,8 @@ def test_search_returns_hits_with_expected_shape(store: Store, tmp_path: Path) -
     h = hits[0]
     assert set(h.keys()) == {
         "score",
+        "cosine",
+        "bm25",
         "source_name",
         "source_path",
         "heading_path",
@@ -124,6 +126,17 @@ def test_search_returns_hits_with_expected_shape(store: Store, tmp_path: Path) -
     }
     assert h["source_name"] == "vault"
     assert "body text" in h["text"]
+
+
+def test_search_exposes_cosine_similarity(store: Store, tmp_path: Path) -> None:
+    _seed(store, tmp_path, "vault", {"a.md": "# Heading\n\nbody text\n"})
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+
+    hits = tools.search("body", sources=None, k=5)
+
+    assert hits
+    assert isinstance(hits[0]["cosine"], float)
+    assert -1.0 <= hits[0]["cosine"] <= 1.0
 
 
 def test_search_empty_query_returns_empty(store: Store, tmp_path: Path) -> None:

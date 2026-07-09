@@ -41,6 +41,8 @@ class _Embedder(Protocol):
 
 class SearchResult(TypedDict):
     score: float
+    cosine: float | None
+    bm25: float | None
     source_name: str
     source_path: str
     heading_path: str
@@ -76,6 +78,20 @@ def build_tools(
     """Bind the store/embedder/config to a ``Tools`` payload of pure functions."""
 
     def search(query: str, sources: list[str] | None, k: int) -> list[SearchResult]:
+        """Hybrid semantic + keyword search over the user's indexed sources.
+
+        Reach for this instead of grep/file search when (a) you want matches
+        by meaning rather than shared keywords, or (b) the content lives
+        outside the current workspace — the Obsidian vault from a coding
+        session, or indexed repos from a notes session. For exact-string
+        lookup inside files you can already read, built-in grep is better.
+
+        Scoring: each hit carries `cosine` (raw cosine similarity of the
+        chunk to the query — the hit-strength signal; compare it across hits
+        and treat a sharp drop-off as the end of the relevant results),
+        `bm25` (raw keyword score; null when the chunk had no lexical
+        match), and `score` (the rank-fusion value used only for ordering).
+        """
         if not query.strip():
             return []
         effective_k = max(_K_MIN, min(k, _K_MAX))
@@ -95,6 +111,8 @@ def build_tools(
         return [
             SearchResult(
                 score=h.score,
+                cosine=h.cosine,
+                bm25=h.bm25,
                 source_name=h.source_name,
                 source_path=h.chunk.source_path,
                 heading_path=h.chunk.heading_path,
@@ -127,9 +145,12 @@ def make_server(tools: Tools) -> FastMCP:
         name="local-rag",
         instructions=(
             "Local semantic + keyword search across the user's Obsidian "
-            "vault and indexed source repos. Use `search` for content "
-            "lookup, `list_sources` to discover what's indexed, and "
-            "`index_status` for chunk counts."
+            "vault and indexed source repos. `search` beats built-in "
+            "grep when the match is conceptual (no shared keywords) or "
+            "the content is outside the current workspace; use "
+            "`list_sources` to discover what's indexed and `index_status` "
+            "for chunk counts. Hits include `cosine` (strength signal) "
+            "and `bm25` (keyword signal) alongside the fusion rank score."
         ),
     )
 

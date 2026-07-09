@@ -30,8 +30,17 @@ class Chunk:
 
 @dataclass(frozen=True)
 class SearchHit:
-    """A search result. ``score`` is uniformly higher-is-better across rankers."""
+    """A search result. ``score`` is uniformly higher-is-better across rankers.
+
+    ``score`` is the ranker's fused value (RRF for hybrid search, cosine for
+    vector-only) and encodes rank, not strength. ``cosine`` is the raw cosine
+    similarity of the chunk to the query — the value to threshold on or use
+    to judge hit strength. ``bm25`` is the raw FTS score when the chunk
+    matched lexically, else ``None``.
+    """
 
     source_name: str
     chunk: Chunk
     score: float
+    cosine: float | None = None
+    bm25: float | None = None

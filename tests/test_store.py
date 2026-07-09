@@ -338,3 +338,60 @@ def test_search_results_carry_full_chunk_and_source_name(store: Store) -> None:
     assert h.chunk.file_hash == "abc"
     assert h.chunk.char_start == 10
     assert h.chunk.char_end == 22
+
+
+# ------------------------------------------------------- score transparency ---
+# `score` stays the ranker's fused value (RRF); `cosine` and `bm25` expose
+# the raw signals so callers can judge hit strength and threshold.
+
+
+def test_search_hybrid_exposes_cosine_on_every_hit(store: Store) -> None:
+    store.ensure_table("vault")
+    near = [1.0] + [0.0] * (DIM - 1)
+    far = [0.0, 1.0] + [0.0] * (DIM - 2)
+    store.upsert_chunks(
+        "vault",
+        [
+            _chunk(path="/near.md", idx=0, text="unrelated words", vector=near),
+            _chunk(path="/far.md", idx=0, text="other content", vector=far),
+        ],
+    )
+
+    hits = store.search_hybrid(["vault"], query_text="zzz", query_vector=near, k=5)
+
+    by_path = {h.chunk.source_path: h for h in hits}
+    assert by_path["/near.md"].cosine == pytest.approx(1.0, abs=1e-4)
+    assert by_path["/far.md"].cosine == pytest.approx(0.0, abs=1e-4)
+
+
+def test_search_hybrid_exposes_bm25_for_lexical_hits(store: Store) -> None:
+    store.ensure_table("vault")
+    near = [1.0] + [0.0] * (DIM - 1)
+    far = [0.0, 1.0] + [0.0] * (DIM - 2)
+    store.upsert_chunks(
+        "vault",
+        [
+            _chunk(path="/lex.md", idx=0, text="quantum entanglement basics", vector=far),
+            _chunk(path="/sem.md", idx=0, text="totally different topic", vector=near),
+        ],
+    )
+
+    hits = store.search_hybrid(
+        ["vault"], query_text="quantum entanglement", query_vector=near, k=5
+    )
+
+    by_path = {h.chunk.source_path: h for h in hits}
+    assert by_path["/lex.md"].bm25 is not None
+    assert by_path["/lex.md"].bm25 > 0.0
+    # No lexical overlap for the semantic-only hit — no BM25 signal.
+    assert by_path["/sem.md"].bm25 is None
+
+
+def test_search_vector_sets_cosine_equal_to_score(store: Store) -> None:
+    store.ensure_table("vault")
+    v = [1.0] + [0.0] * (DIM - 1)
+    store.upsert_chunks("vault", [_chunk(path="/a.md", idx=0, text="x", vector=v)])
+
+    hits = store.search_vector(["vault"], query_vector=v, k=1)
+
+    assert hits[0].cosine == pytest.approx(hits[0].score)

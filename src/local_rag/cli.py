@@ -57,7 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "list":
         return _cmd_list(store)
     if args.cmd == "index":
-        return _cmd_index(config, store, args.sources)
+        return _cmd_index(config, store, args.sources, force=args.force)
     if args.cmd == "search":
         return _cmd_search(config, store, args.query, args.sources, args.k)
     if args.cmd == "eval":
@@ -80,7 +80,7 @@ def _cmd_list(store: Store) -> int:
     return 0
 
 
-def _cmd_index(config: Config, store: Store, requested: list[str]) -> int:
+def _cmd_index(config: Config, store: Store, requested: list[str], *, force: bool = False) -> int:
     by_name = {s.name: s for s in config.sources}
     if requested:
         unknown = [n for n in requested if n not in by_name]
@@ -102,7 +102,7 @@ def _cmd_index(config: Config, store: Store, requested: list[str]) -> int:
 
     indexer = Indexer(store, embedder)
     for source in targets:
-        result = indexer.index_source(source)
+        result = indexer.index_source(source, force=force)
         _print_index_summary(result)
     return 0
 
@@ -217,7 +217,12 @@ def _print_eval_report(report: EvalReport) -> None:
 
 
 def _print_hit(hit: SearchHit) -> None:
-    header = f"score={hit.score:.3f}  {hit.source_name}  {hit.chunk.source_path}"
+    header = f"score={hit.score:.3f}"
+    if hit.cosine is not None:
+        header += f"  cos={hit.cosine:.3f}"
+    if hit.bm25 is not None:
+        header += f"  bm25={hit.bm25:.2f}"
+    header += f"  {hit.source_name}  {hit.chunk.source_path}"
     if hit.chunk.heading_path:
         header += f"  {hit.chunk.heading_path}"
     print(header)
@@ -252,6 +257,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     p_idx = sub.add_parser("index", help="reindex all sources or named ones")
     p_idx.add_argument("sources", nargs="*", metavar="SOURCE")
+    p_idx.add_argument(
+        "--force",
+        action="store_true",
+        help="re-chunk and re-embed every file, ignoring stored hashes",
+    )
 
     p_search = sub.add_parser("search", help="hybrid search across sources")
     p_search.add_argument("query", metavar="QUERY")

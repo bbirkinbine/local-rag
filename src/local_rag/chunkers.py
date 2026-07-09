@@ -36,13 +36,22 @@ _MARKDOWN_SUFFIXES = frozenset({".md"})
 # this cap they'd produce one chunk per file and fail.
 _MAX_CHUNK_CHARS = 24_000
 
+# Retrieval-quality cap for markdown chunks. Unbounded heading sections make
+# keyword-dense notes dominate BM25 and dilute the embedding, so sections are
+# split to this size at paragraph boundaries, with overlap so a fact straddling
+# a cut still lands whole in one chunk.
+_MD_MAX_CHUNK_CHARS = 1_200
+_MD_CHUNK_OVERLAP_CHARS = 150
+
 
 def chunk_markdown(text: str, *, source_path: str, file_hash: str) -> list[Chunk]:
     """Header-aware markdown chunking.
 
     Splits on ATX headings (``^#{1,6} ``). Each chunk contains the heading line
     that introduces it plus all content up to the next heading. Pre-heading
-    body, if any, emits its own chunk with ``heading_path=""``.
+    body, if any, emits its own chunk with ``heading_path=""``. Sections over
+    ``_MD_MAX_CHUNK_CHARS`` are further split at paragraph boundaries with
+    ``_MD_CHUNK_OVERLAP_CHARS`` of overlap (retrieval-quality cap).
 
     Args:
         text: The raw markdown file contents.
@@ -100,7 +109,11 @@ def chunk_markdown(text: str, *, source_path: str, file_hash: str) -> list[Chunk
         cursor += len(line)
 
     flush()
-    return _split_oversized(chunks)
+    return _split_oversized(
+        chunks,
+        max_chars=_MD_MAX_CHUNK_CHARS,
+        overlap=_MD_CHUNK_OVERLAP_CHARS,
+    )
 
 
 def chunk_code(
@@ -203,37 +216,42 @@ def _format_path(stack: list[tuple[int, str]]) -> str:
     return "/" + "/".join(title for _, title in stack)
 
 
-def _split_oversized(chunks: list[Chunk]) -> list[Chunk]:
-    """Split any chunk whose text exceeds ``_MAX_CHUNK_CHARS``.
+def _split_oversized(
+    chunks: list[Chunk],
+    *,
+    max_chars: int = _MAX_CHUNK_CHARS,
+    overlap: int = 0,
+) -> list[Chunk]:
+    """Split any chunk whose text exceeds ``max_chars``.
 
-    Splits prefer whitespace boundaries so we don't break mid-word; falls back
-    to a hard character split if no whitespace is found within the window.
-    Sub-chunks inherit ``heading_path``/``source_path``/``file_hash`` and have
-    correct ``char_start``/``char_end`` offsets (round-trip invariant
-    preserved per sub-chunk). ``chunk_index`` is renumbered sequentially
-    across the final list.
+    Cuts prefer paragraph breaks (``\\n\\n``), then line breaks, then any
+    whitespace, and finally a hard character split. With ``overlap`` > 0 each
+    sub-chunk starts that many characters before the previous cut. Sub-chunks
+    inherit ``heading_path``/``source_path``/``file_hash`` and have correct
+    ``char_start``/``char_end`` offsets (round-trip invariant preserved per
+    sub-chunk). ``chunk_index`` is renumbered sequentially across the list.
     """
-    needs_split = any(len(c.text) > _MAX_CHUNK_CHARS for c in chunks)
+    needs_split = any(len(c.text) > max_chars for c in chunks)
     if not needs_split:
         return chunks
 
     out: list[Chunk] = []
     for c in chunks:
-        if len(c.text) <= _MAX_CHUNK_CHARS:
+        if len(c.text) <= max_chars:
             out.append(c)
         else:
-            out.extend(_split_one(c))
+            out.extend(_split_one(c, max_chars=max_chars, overlap=overlap))
     return [replace(c, chunk_index=i) for i, c in enumerate(out)]
 
 
-def _split_one(c: Chunk) -> list[Chunk]:
+def _split_one(c: Chunk, *, max_chars: int, overlap: int) -> list[Chunk]:
     text = c.text
     out: list[Chunk] = []
     pos = 0
     while pos < len(text):
-        end = min(pos + _MAX_CHUNK_CHARS, len(text))
+        end = min(pos + max_chars, len(text))
         if end < len(text):
-            cut = _backtrack_to_whitespace(text, pos, end)
+            cut = _backtrack_to_break(text, pos, end)
             if cut > pos:
                 end = cut
         sub_text = text[pos:end]
@@ -251,15 +269,28 @@ def _split_one(c: Chunk) -> list[Chunk]:
                 vector=[],
             )
         )
-        pos = end
+        if end == len(text):
+            break
+        # Guaranteed forward progress even when overlap >= the emitted span.
+        pos = max(end - overlap, pos + 1)
     return out
 
 
-def _backtrack_to_whitespace(text: str, start: int, end: int) -> int:
-    """Return the largest position in ``(start, end]`` that follows a
-    whitespace character. Falls back to ``end`` (a hard split) if no
-    whitespace is found in the window — at worst we break mid-token, which
-    is acceptable for embedding."""
+def _backtrack_to_break(text: str, start: int, end: int) -> int:
+    """Best cut position in ``(start, end]``: paragraph break > line break >
+    whitespace > hard split at ``end``.
+
+    Paragraph/line breaks are only accepted in the second half of the window
+    so backtracking never produces a chunk under half of ``max_chars``; the
+    whitespace fallback searches the whole window.
+    """
+    min_cut = start + (end - start) // 2
+    para = text.rfind("\n\n", min_cut, end)
+    if para != -1:
+        return para + 2
+    line = text.rfind("\n", min_cut, end)
+    if line != -1:
+        return line + 1
     for i in range(end, start, -1):
         if text[i - 1].isspace():
             return i

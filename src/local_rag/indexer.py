@@ -104,8 +104,12 @@ class Indexer:
         self._max_file_bytes = max_file_bytes
         self._allowed_extensions = allowed_extensions or ALLOWED_EXTENSIONS
 
-    def index_source(self, source: Source) -> IndexResult:
-        """Sync disk → store for one source. Returns a per-file result list."""
+    def index_source(self, source: Source, *, force: bool = False) -> IndexResult:
+        """Sync disk → store for one source. Returns a per-file result list.
+
+        ``force=True`` ignores stored file hashes and re-chunks/re-embeds
+        every file — the migration path after a chunker or embedder change.
+        """
         self._store.ensure_table(source.name)
         stored = self._store.file_hashes(source.name)
 
@@ -123,7 +127,9 @@ class Indexer:
             if entry.oversize:
                 results.append(FileResult(path=entry.path, status="skipped_oversize"))
             else:
-                results.append(self._process_one(source.name, entry.path, stored))
+                results.append(
+                    self._process_one(source.name, entry.path, stored, force=force)
+                )
 
         for stale in sorted(set(stored) - seen_paths):
             removed = self._store.delete_file(source.name, stale)
@@ -138,7 +144,7 @@ class Indexer:
         return IndexResult(source_name=source.name, files=results)
 
     def _process_one(
-        self, source_name: str, file: Path, stored: dict[str, str]
+        self, source_name: str, file: Path, stored: dict[str, str], *, force: bool = False
     ) -> FileResult:
         try:
             file_hash = _file_sha256(file)
@@ -146,7 +152,7 @@ class Indexer:
             log.warning("indexer.unreadable", path=str(file), error=str(e))
             return FileResult(path=file, status="skipped_unreadable", error=str(e))
 
-        if stored.get(str(file)) == file_hash:
+        if not force and stored.get(str(file)) == file_hash:
             return FileResult(path=file, status="unchanged")
 
         try:

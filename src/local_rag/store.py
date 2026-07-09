@@ -8,6 +8,7 @@ so hybrid search works without a separate setup step.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,16 @@ from local_rag.models import Chunk, SearchHit
 
 # Reciprocal Rank Fusion constant. 60 is the BM25/RRF folklore default.
 _RRF_K = 60
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    """Plain cosine similarity; 0.0 if either vector is all zeros."""
+    dot = sum(x * y for x, y in zip(a, b, strict=True))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0.0 or norm_b == 0.0:
+        return 0.0
+    return dot / (norm_a * norm_b)
 
 
 class Store:
@@ -142,6 +153,7 @@ class Store:
                         source_name=name,
                         chunk=self._row_to_chunk(row),
                         score=score,
+                        cosine=score,
                     )
                 )
         hits.sort(key=lambda h: -h.score)
@@ -154,13 +166,20 @@ class Store:
         query_vector: list[float],
         k: int,
     ) -> list[SearchHit]:
-        """Vector + FTS fused via Reciprocal Rank Fusion."""
+        """Vector + FTS fused via Reciprocal Rank Fusion.
+
+        Each returned hit carries the fused RRF value as ``score`` (rank
+        signal only) plus the raw signals: ``cosine`` similarity to the query
+        (computed for every hit) and the ``bm25`` FTS score for hits that
+        matched lexically.
+        """
         if not source_names:
             return []
 
         expand = max(4 * k, 50)
         rrf: dict[str, float] = {}
         chunks: dict[str, tuple[str, Chunk]] = {}
+        bm25: dict[str, float] = {}
 
         for name in source_names:
             tbl = self._db.open_table(name)
@@ -180,10 +199,17 @@ class Store:
                 key = f"{name}::{row['id']}"
                 rrf[key] = rrf.get(key, 0.0) + 1.0 / (_RRF_K + rank)
                 chunks.setdefault(key, (name, self._row_to_chunk(row)))
+                bm25[key] = float(row["_score"])
 
         ranked = sorted(rrf.items(), key=lambda kv: -kv[1])[:k]
         return [
-            SearchHit(source_name=chunks[key][0], chunk=chunks[key][1], score=score)
+            SearchHit(
+                source_name=chunks[key][0],
+                chunk=chunks[key][1],
+                score=score,
+                cosine=_cosine_similarity(query_vector, chunks[key][1].vector),
+                bm25=bm25.get(key),
+            )
             for key, score in ranked
         ]
 

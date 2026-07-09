@@ -182,6 +182,25 @@ def test_index_unknown_source_exits_two(
     assert "vault" in err  # lists valid sources
 
 
+def test_index_force_reembeds_unchanged_files(
+    tmp_path: Path, patch_embedder: FakeEmbedder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """--force ignores stored file hashes — the chunker-change migration path."""
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n\nbody\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+
+    cli.main(["--config", str(cfg), "index"])
+    calls_after_first = len(patch_embedder.calls)
+    cli.main(["--config", str(cfg), "index"])
+    # Incremental: unchanged file, no new embed calls.
+    assert len(patch_embedder.calls) == calls_after_first
+
+    rc = cli.main(["--config", str(cfg), "index", "--force"])
+
+    assert rc == 0
+    assert len(patch_embedder.calls) > calls_after_first
+
+
 def test_index_runs_health_check(tmp_path: Path, patch_embedder: FakeEmbedder) -> None:
     src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
     cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
@@ -408,3 +427,18 @@ def test_search_sources_flag_restricts_query(
     assert score_lines
     assert all("vault" in line for line in score_lines)
     assert not any("code" in line for line in score_lines)
+
+
+def test_search_output_includes_cosine(
+    tmp_path: Path, patch_embedder: FakeEmbedder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# H\n\nthe quick brown fox\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+    cli.main(["--config", str(cfg), "index"])
+    capsys.readouterr()
+
+    rc = cli.main(["--config", str(cfg), "search", "quick"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "cos=" in out

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import itertools
+
 import pytest
 
 from local_rag.chunkers import chunk_code, chunk_file, chunk_markdown
@@ -338,3 +340,72 @@ def test_chunk_file_returns_chunk_instances() -> None:
     chunks = chunk_file("hello\n", source_path="/a.txt", file_hash="h")
 
     assert all(isinstance(c, Chunk) for c in chunks)
+
+
+# ------------------------------------------------- markdown retrieval cap ---
+# Markdown chunks are capped at ~1,200 chars for retrieval quality (TODO.md
+# "ranking quality"): unbounded heading sections beat topical notes in BM25.
+
+
+def _paragraphs(n: int, width: int = 280) -> str:
+    """n distinct paragraphs of ~width chars each, blank-line separated."""
+    return "\n\n".join(f"para{i:03d} " + ("lorem ipsum " * 40)[: width - 8] for i in range(n))
+
+
+def test_markdown_caps_section_chunks_for_retrieval() -> None:
+    text = f"# Section\n\n{_paragraphs(20)}\n"
+    chunks = chunk_markdown(text, source_path="/a.md", file_hash="h")
+
+    assert len(chunks) >= 4
+    assert all(len(c.text) <= 1_200 for c in chunks)
+
+
+def test_markdown_capped_chunks_keep_heading_path() -> None:
+    text = f"# Top\n\n## Sub\n\n{_paragraphs(15)}\n"
+    chunks = chunk_markdown(text, source_path="/a.md", file_hash="h")
+
+    sub_chunks = [c for c in chunks if c.heading_path == "/Top/Sub"]
+    assert len(sub_chunks) >= 3
+
+
+def test_markdown_capped_chunks_overlap() -> None:
+    text = f"# Section\n\n{_paragraphs(20)}\n"
+    chunks = chunk_markdown(text, source_path="/a.md", file_hash="h")
+
+    assert len(chunks) >= 2
+    for prev, nxt in itertools.pairwise(chunks):
+        assert nxt.char_start < prev.char_end
+
+
+def test_markdown_capped_split_prefers_paragraph_boundaries() -> None:
+    text = f"# Section\n\n{_paragraphs(20)}\n"
+    chunks = chunk_markdown(text, source_path="/a.md", file_hash="h")
+
+    assert len(chunks) >= 2
+    # Every non-final chunk should end at a paragraph break.
+    for c in chunks[:-1]:
+        assert c.text.endswith("\n\n")
+
+
+def test_markdown_capped_round_trip_offsets() -> None:
+    text = f"# Section\n\n{_paragraphs(20)}\n"
+    chunks = chunk_markdown(text, source_path="/a.md", file_hash="h")
+
+    for c in chunks:
+        assert text[c.char_start : c.char_end] == c.text
+
+
+def test_markdown_short_sections_stay_whole() -> None:
+    text = "# A\n\nshort body\n\n# B\n\nanother short body\n"
+    chunks = chunk_markdown(text, source_path="/a.md", file_hash="h")
+
+    assert [c.heading_path for c in chunks] == ["/A", "/B"]
+
+
+def test_code_chunks_not_subject_to_markdown_cap() -> None:
+    # ~3,000 chars across 50 lines: one 60-line window, under the 24k embed
+    # budget — must stay a single chunk (the 1,200 cap is markdown-only).
+    text = "".join(f"line {i} " + "x" * 50 + "\n" for i in range(50))
+    chunks = chunk_code(text, source_path="/a.py", file_hash="h")
+
+    assert len(chunks) == 1
