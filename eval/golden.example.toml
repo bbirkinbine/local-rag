@@ -1,0 +1,16 @@
+# Template for the golden-query retrieval eval (`local-rag eval`).
+#
+# Copy to eval/golden.local.toml (gitignored) and fill in real queries.
+# Each entry pairs a search query with the file(s) that should rank in the
+# top-k. Paths are suffix-matched on path-component boundaries, so a
+# source-relative path like "notes/example.md" works regardless of how the
+# indexer prefixed it.
+#
+# Run: uv run local-rag eval            (uses eval/golden.local.toml)
+#      uv run local-rag eval --golden path/to/file.toml -k 5
+
+[[queries]]
+query = "example topic the note is about"
+expected_paths = [
+  "notes/example-note.md",
+]

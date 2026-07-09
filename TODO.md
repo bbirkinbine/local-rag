@@ -24,13 +24,14 @@ migration path.
 
 In priority order:
 
-- [ ] **Eval harness** — do this first; it makes every later change
-      measurable. A script that runs a golden-query set (query → expected
-      file paths) against the index and reports recall@5 / MRR. Golden
-      queries name real vault notes, so they live in a gitignored file —
-      `eval/golden.local.toml` already exists locally, seeded with the
-      three stress-test failures; check in one synthetic example as a
-      template.
+- [x] **Eval harness** (done 2026-07-09) — `local-rag eval` runs a
+      golden-query set against the live index and reports file-level
+      recall@5 / MRR (expected paths suffix-matched on path-component
+      boundaries). Template checked in at `eval/golden.example.toml`;
+      real data stays in gitignored `eval/golden.local.toml`.
+      **Baseline: recall@5 = 0.000, MRR = 0.000** on the three
+      stress-test queries — all top-5 hits were code chunks from the
+      `local-rag` repo itself, confirming the ranking diagnosis above.
 - [ ] **Cap markdown chunk size** at ~800–1,200 chars with overlap,
       keeping the headings-first split. Consider down-weighting or
       skipping chunks that are mostly list items (>70% of lines are

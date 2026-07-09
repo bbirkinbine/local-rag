@@ -22,6 +22,7 @@ import structlog
 
 from local_rag.config import Config, ConfigError
 from local_rag.embedder import EmbedderError, OllamaEmbedder
+from local_rag.evals import EvalError, EvalReport, evaluate, load_golden_queries
 from local_rag.indexer import Indexer, IndexResult
 from local_rag.mcp_server import run_stdio
 from local_rag.models import SearchHit
@@ -59,6 +60,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_index(config, store, args.sources)
     if args.cmd == "search":
         return _cmd_search(config, store, args.query, args.sources, args.k)
+    if args.cmd == "eval":
+        return _cmd_eval(config, store, args.golden, args.k)
     if args.cmd == "mcp":
         return _cmd_mcp(config, store)
     parser.error(f"unknown command {args.cmd!r}")
@@ -155,6 +158,30 @@ def _cmd_search(
     return 0
 
 
+def _cmd_eval(config: Config, store: Store, golden_path: Path, k: int) -> int:
+    try:
+        queries = load_golden_queries(golden_path)
+    except EvalError as e:
+        _err(str(e))
+        return 2
+
+    existing = [s.name for s in config.sources if s.name in store.list_sources()]
+    if not existing:
+        _err("no indexed sources to evaluate against; run `local-rag index` first")
+        return 2
+
+    try:
+        embedder = _build_embedder(config)
+        embedder.health_check()
+    except EmbedderError as e:
+        _err(f"embedder unreachable: {e}")
+        return 3
+
+    report = evaluate(store, embedder, existing, queries, k=k)
+    _print_eval_report(report)
+    return 0
+
+
 def _cmd_mcp(config: Config, store: Store) -> int:
     try:
         embedder = _build_embedder(config)
@@ -174,6 +201,19 @@ def _print_index_summary(result: IndexResult) -> None:
         counts[fr.status] = counts.get(fr.status, 0) + 1
     parts = ", ".join(f"{k}={v}" for k, v in sorted(counts.items()))
     print(f"{result.source_name}: {parts or 'nothing to do'}")
+
+
+def _print_eval_report(report: EvalReport) -> None:
+    for r in report.results:
+        if r.best_rank is not None:
+            print(f"rank={r.best_rank}  {r.query.query!r}  hit={r.matched_path}")
+        else:
+            expected = ", ".join(r.query.expected_paths)
+            print(f"rank=-  {r.query.query!r}  miss (expected: {expected})")
+    print(
+        f"recall@{report.k}={report.recall:.3f}  mrr={report.mrr:.3f}  "
+        f"queries={len(report.results)}"
+    )
 
 
 def _print_hit(hit: SearchHit) -> None:
@@ -227,6 +267,20 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=10,
         help="top-k hits to return (default: 10)",
+    )
+
+    p_eval = sub.add_parser("eval", help="run the golden-query retrieval eval")
+    p_eval.add_argument(
+        "--golden",
+        type=Path,
+        default=Path("eval/golden.local.toml"),
+        help="golden-query TOML file (default: eval/golden.local.toml)",
+    )
+    p_eval.add_argument(
+        "-k",
+        type=int,
+        default=5,
+        help="file-level cutoff for recall@k (default: 5)",
     )
 
     sub.add_parser("mcp", help="run the MCP server (stdio)")
