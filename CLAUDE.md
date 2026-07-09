@@ -52,7 +52,8 @@ A small Python tool that indexes the Obsidian vault and selected source repos in
 
 - Implementation complete through the stdio MCP server; both Claude Code and Cowork integrations verified end-to-end. The HTTP/HTTPS transport was removed 2026-07-09 (no consumers — stdio only).
 - Full spec at `docs/specs/local-rag.md` — read this before any slice.
-- The 2026-07-09 ranking-quality push shipped: golden-query eval harness (`local-rag eval`, supports negative queries), ~1,200-char markdown chunk cap, real scores (`cosine`/`bm25`), cosine-plus-lexical-boost ranking, and fixes for LanceDB FTS delta bugs (`Store.optimize`, `_fts_top`). Remaining `TODO.md` items are wait-for-evidence.
+- The 2026-07-09 ranking-quality push shipped: golden-query eval harness (`local-rag eval`, supports negative queries), ~1,200-char markdown chunk cap, real scores (`cosine`/`bm25`), cosine-plus-lexical-boost ranking, and fixes for LanceDB FTS delta bugs (`Store.optimize`, `_fts_top`).
+- Next actionable front: portability to non-Claude harnesses (see `TODO.md` § portability) — `--json` CLI output first; note that pi-style harnesses are CLI-first with no built-in MCP. The ranking items that remain are wait-for-evidence (grow the golden set from real usage before tuning further).
 - **Never commit personal vault paths or note names** — golden-query eval data lives in gitignored `*.local.toml` files.
 
 ## Repository / publishing

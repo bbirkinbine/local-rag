@@ -28,6 +28,36 @@ Constraints unchanged: keep `search(query, sources, k)` backward
 compatible, keep indexing incremental, and give any index-format change a
 migration path (`index --force` is the reindex path for chunker changes).
 
+## Open — portability to non-Claude harnesses (scoped 2026-07-09)
+
+The stdio MCP server already drops into any MCP-native harness with a
+one-line config: Cursor, Windsurf, Cline/Roo Code, Continue, Zed, VS Code
+Copilot agent mode, JetBrains AI Assistant, Codex CLI, Gemini CLI, Goose,
+and MCP adapters for OpenAI Agents SDK / LangChain / LlamaIndex.
+HTTP-only clients need an adapter like `mcp-proxy` (the HTTP transport
+was removed 2026-07-09; recoverable at `a7ab5ee`/`8e53cf4`).
+
+**The notable exception is pi** (badlogic/pi-mono): it has *no built-in
+MCP by design* — its author's argument is that MCP servers front-load
+thousands of tokens of tool descriptions, and pi instead favors CLI
+tools with READMEs the agent reads on demand (its "skills" pattern).
+MCP is possible there via the third-party `pi-mcp-adapter` extension,
+but the idiomatic integration is the CLI itself. Design accordingly:
+the CLI is the universal, token-free agent surface.
+
+- [ ] **`--json` output for `search` (and `list`)** — machine-readable
+      CLI results (same fields as the MCP `SearchResult`: score, cosine,
+      bm25, source_name, source_path, heading_path, char offsets, text).
+      Makes local-rag a first-class pi tool and usable from shell
+      scripts/cron/any harness that can run commands. Small slice;
+      tests first per CLAUDE.md.
+- [ ] **Agent-facing CLI README** (pi skills pattern) — a short doc an
+      agent reads on demand: when `search` beats grep, what the scores
+      mean, `--json` usage. Mirror the MCP tool description in
+      `mcp_server.py`; keep the two in sync.
+- [ ] **`mcp-proxy` recipe** in `docs/claude-integration.md` for
+      HTTP-only clients — only if a concrete client shows up.
+
 ## Done — ranking quality & tool adoption (2026-07-09)
 
 - [x] **Eval harness** — `local-rag eval` runs a golden-query set against

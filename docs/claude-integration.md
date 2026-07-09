@@ -137,6 +137,23 @@ Code / Cowork where local-rag is wired up.
 
 ---
 
+## Other agent harnesses
+
+The server is plain stdio MCP, so any MCP-native harness takes the same
+one-line config as Claude Code (Cursor, Windsurf, Cline/Roo Code,
+Continue, Zed, VS Code Copilot agent mode, JetBrains AI, Codex CLI,
+Gemini CLI, Goose, and MCP adapters for the OpenAI Agents SDK /
+LangChain / LlamaIndex). HTTP-only clients need a stdio-to-HTTP adapter
+such as `mcp-proxy`.
+
+CLI-first harnesses with no built-in MCP (notably
+[pi](https://github.com/badlogic/pi-mono), which favors CLI tools plus
+on-demand READMEs over MCP's up-front tool-description cost) should call
+the `local-rag` CLI directly — see `TODO.md` for the planned `--json`
+output and agent-facing CLI README.
+
+---
+
 ## How tool calls actually work
 
 You don't invoke tools directly. The model decides whether and when to
