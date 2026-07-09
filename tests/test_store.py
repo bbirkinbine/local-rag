@@ -393,3 +393,67 @@ def test_search_vector_sets_cosine_equal_to_score(store: Store) -> None:
     hits = store.search_vector(["vault"], query_vector=v, k=1)
 
     assert hits[0].cosine == pytest.approx(hits[0].score)
+
+
+# ------------------------------------------------------- context expansion ---
+
+
+def _sliced_chunks(path: str, text: str, bounds: list[tuple[int, int]]) -> list[Chunk]:
+    """Chunks that are literal slices of ``text`` (round-trip invariant holds)."""
+    return [
+        _chunk(
+            path=path,
+            idx=i,
+            text=text[start:end],
+            char_start=start,
+            char_end=end,
+        )
+        for i, (start, end) in enumerate(bounds)
+    ]
+
+
+def test_expanded_text_radius_zero_returns_center_chunk(store: Store) -> None:
+    text = "aaaa bbbb cccc"
+    store.ensure_table("vault")
+    store.upsert_chunks("vault", _sliced_chunks("/f.md", text, [(0, 5), (5, 10), (10, 14)]))
+
+    got, start, end = store.expanded_text("vault", "/f.md", center_index=1, radius=0)
+
+    assert (got, start, end) == ("bbbb ", 5, 10)
+
+
+def test_expanded_text_stitches_overlapping_neighbors(store: Store) -> None:
+    # Overlapping bounds mimic the markdown cap's 150-char overlap: naive
+    # concatenation would duplicate the shared region.
+    text = "0123456789ABCDEFGHIJ"
+    bounds = [(0, 8), (6, 14), (12, 20)]
+    store.ensure_table("vault")
+    store.upsert_chunks("vault", _sliced_chunks("/f.md", text, bounds))
+
+    got, start, end = store.expanded_text("vault", "/f.md", center_index=1, radius=1)
+
+    assert got == text
+    assert (start, end) == (0, 20)
+
+
+def test_expanded_text_clips_at_file_edges(store: Store) -> None:
+    text = "aaaa bbbb cccc"
+    store.ensure_table("vault")
+    store.upsert_chunks("vault", _sliced_chunks("/f.md", text, [(0, 5), (5, 10), (10, 14)]))
+
+    got, start, end = store.expanded_text("vault", "/f.md", center_index=0, radius=5)
+
+    assert got == text
+    assert (start, end) == (0, 14)
+
+
+def test_expanded_text_ignores_other_files(store: Store) -> None:
+    text = "aaaa bbbb"
+    store.ensure_table("vault")
+    store.upsert_chunks("vault", _sliced_chunks("/f.md", text, [(0, 5), (5, 9)]))
+    store.upsert_chunks("vault", [_chunk(path="/other.md", idx=0, text="INTRUDER")])
+
+    got, _, _ = store.expanded_text("vault", "/f.md", center_index=0, radius=3)
+
+    assert "INTRUDER" not in got
+    assert got == text

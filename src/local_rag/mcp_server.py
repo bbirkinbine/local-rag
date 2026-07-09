@@ -27,6 +27,7 @@ log = structlog.get_logger()
 
 _K_MIN = 1
 _K_MAX = 100
+_CONTEXT_CHUNKS_MAX = 5
 
 
 class _Embedder(Protocol):
@@ -65,7 +66,7 @@ class IndexStatus(TypedDict):
 class Tools:
     """The three callables FastMCP wires up. Plain functions for testability."""
 
-    search: Callable[[str, list[str] | None, int], list[SearchResult]]
+    search: Callable[[str, list[str] | None, int, int], list[SearchResult]]
     list_sources: Callable[[], list[SourceInfo]]
     index_status: Callable[[], IndexStatus]
 
@@ -77,7 +78,12 @@ def build_tools(
 ) -> Tools:
     """Bind the store/embedder/config to a ``Tools`` payload of pure functions."""
 
-    def search(query: str, sources: list[str] | None, k: int) -> list[SearchResult]:
+    def search(
+        query: str,
+        sources: list[str] | None,
+        k: int,
+        context_chunks: int = 0,
+    ) -> list[SearchResult]:
         """Hybrid semantic + keyword search over the user's indexed sources.
 
         Reach for this instead of grep/file search when (a) you want matches
@@ -91,6 +97,11 @@ def build_tools(
         and treat a sharp drop-off as the end of the relevant results),
         `bm25` (raw keyword score; null when the chunk had no lexical
         match), and `score` (the rank-fusion value used only for ordering).
+
+        Set `context_chunks` (0-5) to widen each hit with that many
+        neighboring chunks on each side of the match — useful when the
+        matched chunk alone is too little context and you can't read the
+        source file directly.
         """
         if not query.strip():
             return []
@@ -108,20 +119,40 @@ def build_tools(
             query_vector=query_vec,
             k=effective_k,
         )
-        return [
-            SearchResult(
-                score=h.score,
-                cosine=h.cosine,
-                bm25=h.bm25,
-                source_name=h.source_name,
-                source_path=h.chunk.source_path,
-                heading_path=h.chunk.heading_path,
-                char_start=h.chunk.char_start,
-                char_end=h.chunk.char_end,
-                text=h.chunk.text,
+        radius = max(0, min(context_chunks, _CONTEXT_CHUNKS_MAX))
+        results: list[SearchResult] = []
+        for h in hits:
+            text = h.chunk.text
+            char_start, char_end = h.chunk.char_start, h.chunk.char_end
+            if radius > 0:
+                try:
+                    text, char_start, char_end = store.expanded_text(
+                        h.source_name,
+                        h.chunk.source_path,
+                        center_index=h.chunk.chunk_index,
+                        radius=radius,
+                    )
+                except ValueError:
+                    log.warning(
+                        "mcp.context_expansion_failed",
+                        source=h.source_name,
+                        path=h.chunk.source_path,
+                        chunk_index=h.chunk.chunk_index,
+                    )
+            results.append(
+                SearchResult(
+                    score=h.score,
+                    cosine=h.cosine,
+                    bm25=h.bm25,
+                    source_name=h.source_name,
+                    source_path=h.chunk.source_path,
+                    heading_path=h.chunk.heading_path,
+                    char_start=char_start,
+                    char_end=char_end,
+                    text=text,
+                )
             )
-            for h in hits
-        ]
+        return results
 
     def list_sources() -> list[SourceInfo]:
         # Reports every table currently in the DB — including ones from a

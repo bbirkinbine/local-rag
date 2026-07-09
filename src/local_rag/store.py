@@ -213,6 +213,56 @@ class Store:
             for key, score in ranked
         ]
 
+    def expanded_text(
+        self,
+        source_name: str,
+        source_path: str,
+        *,
+        center_index: int,
+        radius: int,
+    ) -> tuple[str, int, int]:
+        """Stitch the chunk at ``center_index`` with up to ``radius`` neighbors
+        on each side into one contiguous span of the source file.
+
+        Overlapping neighbor ranges (the markdown cap's overlap) are merged
+        via their char offsets so no text is duplicated; a gap between chunks
+        (shouldn't occur within one file) falls back to a newline join.
+
+        Returns:
+            ``(text, char_start, char_end)`` of the stitched span.
+
+        Raises:
+            ValueError: if no chunks exist for ``source_path`` around
+                ``center_index``.
+        """
+        tbl = self._db.open_table(source_name)
+        escaped = source_path.replace("'", "''")
+        lo, hi = center_index - radius, center_index + radius
+        rows = (
+            tbl.search()
+            .where(f"source_path = '{escaped}' AND chunk_index >= {lo} AND chunk_index <= {hi}")
+            .limit(hi - lo + 1)
+            .to_list()
+        )
+        if not rows:
+            raise ValueError(f"no chunks for {source_path!r} around index {center_index}")
+        rows.sort(key=lambda r: int(r["chunk_index"]))
+
+        text = str(rows[0]["text"])
+        start = int(rows[0]["char_start"])
+        end = int(rows[0]["char_end"])
+        for row in rows[1:]:
+            row_start, row_end = int(row["char_start"]), int(row["char_end"])
+            row_text = str(row["text"])
+            if row_end <= end:
+                continue  # fully contained in what we already have
+            if row_start <= end:
+                text += row_text[end - row_start :]
+            else:
+                text += "\n" + row_text
+            end = row_end
+        return text, start, end
+
     # ------------------------------------------------------------- mapping
 
     def _chunk_to_row(self, c: Chunk) -> dict[str, Any]:

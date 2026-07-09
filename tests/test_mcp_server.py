@@ -205,3 +205,41 @@ def test_search_returns_empty_when_no_sources_indexed(store: Store) -> None:
     tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
 
     assert tools.search("anything", sources=None, k=5) == []
+
+
+# ------------------------------------------------------- context expansion ---
+
+
+def test_search_context_chunks_expands_hit_text(store: Store, tmp_path: Path) -> None:
+    # One file, three heading sections -> three chunks; FTS should hit the
+    # middle one, and context_chunks=1 should pull in both neighbors.
+    _seed(
+        store,
+        tmp_path,
+        "vault",
+        {"a.md": "# One\n\nfirst section\n\n# Two\n\nneedle content\n\n# Three\n\nlast section\n"},
+    )
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+
+    hits = tools.search("needle", sources=None, k=1, context_chunks=1)
+
+    assert hits
+    assert "needle content" in hits[0]["text"]
+    assert "first section" in hits[0]["text"]
+    assert "last section" in hits[0]["text"]
+
+
+def test_search_context_chunks_defaults_to_no_expansion(store: Store, tmp_path: Path) -> None:
+    _seed(
+        store,
+        tmp_path,
+        "vault",
+        {"a.md": "# One\n\nfirst section\n\n# Two\n\nneedle content\n\n# Three\n\nlast section\n"},
+    )
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+
+    hits = tools.search("needle", sources=None, k=1)
+
+    assert hits
+    assert "needle content" in hits[0]["text"]
+    assert "first section" not in hits[0]["text"]
