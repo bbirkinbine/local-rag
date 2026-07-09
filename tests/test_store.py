@@ -457,3 +457,81 @@ def test_expanded_text_ignores_other_files(store: Store) -> None:
 
     assert "INTRUDER" not in got
     assert got == text
+
+
+# -------------------------------------------------------- cosine re-scoring ---
+# `score` (RRF) gathers candidates; final ordering is raw cosine similarity,
+# with fused rank breaking cosine ties.
+
+
+def _rescore_corpus(store: Store) -> None:
+    store.ensure_table("vault")
+    store.upsert_chunks(
+        "vault",
+        [
+            _chunk(
+                path="/semantic.md",
+                idx=0,
+                text="completely unrelated vocabulary here",  # no query terms
+                vector=[1.0, 0, 0, 0, 0, 0, 0, 0],  # exact vector match
+            ),
+            _chunk(
+                path="/keyword.md",
+                idx=0,
+                text="the tantivy engine indexes documents",  # query terms
+                vector=[0.3, 0.95, 0, 0, 0, 0, 0, 0],  # weak vector match
+            ),
+            # Filler so BM25 corpus statistics behave like a real index.
+            _chunk(
+                path="/f1.md", idx=0, text="alpha beta gamma", vector=[0.0] * 2 + [1.0] + [0.0] * 5
+            ),
+            _chunk(
+                path="/f2.md",
+                idx=0,
+                text="delta epsilon zeta",
+                vector=[0.0] * 3 + [1.0] + [0.0] * 4,
+            ),
+            _chunk(
+                path="/f3.md", idx=0, text="eta theta iota", vector=[0.0] * 4 + [1.0] + [0.0] * 3
+            ),
+        ],
+    )
+
+
+def test_search_hybrid_orders_by_cosine_not_fused_rank(store: Store) -> None:
+    """A lexical match with weak semantic similarity must not outrank a
+    strong semantic match that shares no keywords with the query (the
+    failure mode behind the 2026-07-09 recall@5 = 0 stress test)."""
+    _rescore_corpus(store)
+
+    hits = store.search_hybrid(
+        ["vault"],
+        query_text="tantivy engine",
+        query_vector=[1.0, 0, 0, 0, 0, 0, 0, 0],
+        k=2,
+    )
+
+    by_path = {h.chunk.source_path: h for h in hits}
+    # Scenario guard: the lexical signal really fired for keyword.md.
+    assert by_path["/keyword.md"].bm25 is not None
+    assert hits[0].chunk.source_path == "/semantic.md"
+    assert hits[1].chunk.source_path == "/keyword.md"
+
+
+def test_search_hybrid_breaks_cosine_ties_by_fused_rank(store: Store) -> None:
+    """Identical vectors -> identical cosine; the lexical match must win."""
+    store.ensure_table("vault")
+    v = [1.0, 0, 0, 0, 0, 0, 0, 0]
+    store.upsert_chunks(
+        "vault",
+        [
+            _chunk(path="/plain.md", idx=0, text="nothing relevant here", vector=v),
+            _chunk(path="/match.md", idx=0, text="the tantivy engine is here", vector=v),
+            _chunk(path="/f1.md", idx=0, text="alpha beta gamma", vector=v),
+            _chunk(path="/f2.md", idx=0, text="delta epsilon zeta", vector=v),
+        ],
+    )
+
+    hits = store.search_hybrid(["vault"], query_text="tantivy engine", query_vector=v, k=4)
+
+    assert hits[0].chunk.source_path == "/match.md"

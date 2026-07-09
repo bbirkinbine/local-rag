@@ -2,65 +2,57 @@
 
 ## Open — ranking quality
 
-Search works end-to-end from both clients, but a Cowork stress-test
-(2026-07-09, real queries against the live index) showed ranking quality
-is poor. Two root causes, both verified in the code:
+The 2026-07-09 ranking-quality push (eval harness → chunk cap → score
+transparency → cosine re-scoring, all landed the same day) took the
+golden-query set from **recall@5 = 0.000 / MRR = 0.000** to
+**recall@5 = 0.667 / MRR = 0.400**. Remaining open items:
 
-- **Scores carry no relevance signal.** `search` returns bare RRF values
-  (`store.py`, `_RRF_K = 60`): every score is a sum of `1/(60+rank)`, so
-  it encodes rank only. Callers can't tell a strong hit from a weak one,
-  can't threshold, and can't detect "nothing relevant found".
-- **Markdown chunks are effectively unbounded.** The only cap
-  (`chunkers.py`, `_MAX_CHUNK_CHARS = 24_000`) protects the embedder, not
-  retrieval — a heading section becomes one chunk. Keyword-dense 4.5–8k
-  char list chunks (bookmark-audit style notes) reliably place in the
-  BM25 list and get fused into the top 5, beating topical notes.
-
-The embedding model is not the problem (already `bge-m3` @ 1024-dim).
-
-Constraints for all items: keep `search(query, sources, k)` backward
-compatible, keep indexing incremental, and give any index-format change a
-migration path.
-
-In priority order:
-
-- [x] **Eval harness** (done 2026-07-09) — `local-rag eval` runs a
-      golden-query set against the live index and reports file-level
-      recall@5 / MRR (expected paths suffix-matched on path-component
-      boundaries). Template checked in at `eval/golden.example.toml`;
-      real data stays in gitignored `eval/golden.local.toml`.
-      **Baseline: recall@5 = 0.000, MRR = 0.000** on the three
-      stress-test queries — all top-5 hits were code chunks from the
-      `local-rag` repo itself, confirming the ranking diagnosis above.
-- [ ] **Cap markdown chunk size** at ~800–1,200 chars with overlap,
-      keeping the headings-first split. Consider down-weighting or
-      skipping chunks that are mostly list items (>70% of lines are
-      bullets). Requires a reindex; measure before/after with the harness.
-- [ ] **Expose real scores** — return raw cosine similarity (the
-      vector-only path already computes it in `store.py`) and optionally
-      the BM25 score alongside the RRF rank, so callers can judge hit
-      strength.
-- [ ] **Cosine re-scoring** of the top ~30 fused candidates as a cheap
-      second stage — only if the harness shows the two fixes above were
-      insufficient.
+- [ ] **The remaining golden-query miss is a near-miss**: the expected
+      note is outranked by eight sibling notes on the same topic, all
+      tightly clustered at cosine 0.65–0.69 — arguably correct retrieval
+      against a strict golden entry. Revisit only if real usage shows the
+      "specific note among close siblings" case matters; candidate levers
+      are heading-path/title term boosts or BM25-weighted blending.
+- [ ] **Grow the golden set** as new real queries succeed or fail in
+      Cowork/Claude Code sessions (gitignored `eval/golden.local.toml`);
+      three queries is too few to trust the metrics' stability.
+- [ ] **Down-weight list-heavy chunks** (>70% of lines are bullets) —
+      deferred; the chunk cap + cosine ordering already demoted the
+      keyword-dense list notes that motivated it.
 - [ ] **Frontmatter filters & boosts** (tags, folder path, mild mtime
-      recency) — only if still needed after the above.
+      recency) — only if still needed after real usage.
 
-## Open — tool adoption
+Constraints unchanged: keep `search(query, sources, k)` backward
+compatible, keep indexing incremental, and give any index-format change a
+migration path (`index --force` is the reindex path for chunker changes).
 
-From the 2026-07-08 design review (rationale in `docs/specs/local-rag.md`
-§ "Positioning vs. frontier agentic search"):
+## Done — ranking quality & tool adoption (2026-07-09)
 
-- [ ] **Sharpen the MCP server instructions and `search` description** to
-      state when `search` beats the client's built-in grep: conceptual
-      similarity without shared keywords, and content outside the current
-      project (vault from Claude Code, repos from Cowork). Highest-leverage
-      change for tool adoption; pairs naturally with the score-transparency
-      item (describe what the score means once it's a real similarity).
-- [ ] **Consider a neighboring-chunk expansion parameter** on `search`
-      (e.g. `context_chunks: int`). Cowork can't read local files, so the
-      returned chunk text is all it gets; `chunk_index` already supports
-      this.
+- [x] **Eval harness** — `local-rag eval` runs a golden-query set against
+      the live index and reports file-level recall@5 / MRR (expected paths
+      suffix-matched on path-component boundaries). Template checked in at
+      `eval/golden.example.toml`; real data stays in gitignored
+      `eval/golden.local.toml`. Baseline measured: 0.000 / 0.000.
+- [x] **Cap markdown chunk size** — sections split at ~1,200 chars on
+      paragraph boundaries with 150-char overlap (`chunkers.py`). Added
+      `index --force` as the migration path; full vault re-embedded.
+      Cap alone did not move recall@5 off 0.000 — the fused ranking was
+      the binding constraint (see re-scoring below).
+- [x] **Expose real scores** — hits now carry `cosine` (computed for
+      every hybrid hit) and `bm25` (when a lexical match exists) alongside
+      the RRF `score`, in the CLI (`cos=`/`bm25=`), MCP results, and
+      `SearchHit`.
+- [x] **Cosine re-scoring** — final ordering of the fused candidate pool
+      is now raw cosine (RRF breaks ties). Diagnosis via the new score
+      fields: RRF rank fusion let mediocre-cosine keyword matches
+      (including this repo's own docs, which meta-match search vocabulary)
+      beat 0.66+-cosine notes ranked 46th/81st in fused order. This change
+      alone took recall@5 from 0.000 to 0.667.
+- [x] **Sharpen MCP instructions + `search` description** — states when
+      `search` beats client grep and what each score means.
+- [x] **`context_chunks` parameter on `search`** (0–5) — stitches
+      neighboring chunks onto each hit via char offsets (overlap
+      deduplicated); matters for Cowork now that chunks are capped small.
 
 ## Decided / on hold
 

@@ -166,12 +166,19 @@ class Store:
         query_vector: list[float],
         k: int,
     ) -> list[SearchHit]:
-        """Vector + FTS fused via Reciprocal Rank Fusion.
+        """Hybrid search: RRF fusion for recall, cosine re-scoring for order.
 
-        Each returned hit carries the fused RRF value as ``score`` (rank
-        signal only) plus the raw signals: ``cosine`` similarity to the query
-        (computed for every hit) and the ``bm25`` FTS score for hits that
-        matched lexically.
+        Both modalities contribute candidates (top ``max(4*k, 50)`` each per
+        source), fused via Reciprocal Rank Fusion. The final ordering is raw
+        cosine similarity to the query across the whole fused pool — RRF rank
+        alone let keyword-dense chunks with weak semantic similarity beat
+        strongly-similar notes (2026-07-09 stress test) — with the RRF value
+        breaking cosine ties so exact-keyword matches still win among
+        semantic equals.
+
+        Each hit carries ``cosine`` (the ordering signal), ``bm25`` (raw FTS
+        score when the chunk matched lexically), and ``score`` (the RRF
+        fusion value, kept for diagnostics).
         """
         if not source_names:
             return []
@@ -201,16 +208,20 @@ class Store:
                 chunks.setdefault(key, (name, self._row_to_chunk(row)))
                 bm25[key] = float(row["_score"])
 
-        ranked = sorted(rrf.items(), key=lambda kv: -kv[1])[:k]
+        cosine = {
+            key: _cosine_similarity(query_vector, chunk.vector)
+            for key, (_, chunk) in chunks.items()
+        }
+        ranked = sorted(rrf, key=lambda key: (-cosine[key], -rrf[key]))[:k]
         return [
             SearchHit(
                 source_name=chunks[key][0],
                 chunk=chunks[key][1],
-                score=score,
-                cosine=_cosine_similarity(query_vector, chunks[key][1].vector),
+                score=rrf[key],
+                cosine=cosine[key],
                 bm25=bm25.get(key),
             )
-            for key, score in ranked
+            for key in ranked
         ]
 
     def expanded_text(

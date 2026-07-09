@@ -92,11 +92,12 @@ def build_tools(
         session, or indexed repos from a notes session. For exact-string
         lookup inside files you can already read, built-in grep is better.
 
-        Scoring: each hit carries `cosine` (raw cosine similarity of the
-        chunk to the query — the hit-strength signal; compare it across hits
-        and treat a sharp drop-off as the end of the relevant results),
-        `bm25` (raw keyword score; null when the chunk had no lexical
-        match), and `score` (the rank-fusion value used only for ordering).
+        Scoring: results are ordered by `cosine` (raw cosine similarity of
+        the chunk to the query — the hit-strength signal; treat a sharp
+        drop-off as the end of the relevant results). Each hit also carries
+        `bm25` (raw keyword score; null when the chunk had no lexical match)
+        and `score` (the internal rank-fusion value used for candidate
+        recall — diagnostic only).
 
         Set `context_chunks` (0-5) to widen each hit with that many
         neighboring chunks on each side of the match — useful when the
