@@ -13,26 +13,15 @@ configures structlog before calling :func:`run_stdio`).
 
 from __future__ import annotations
 
-import hashlib
-import hmac
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Protocol, TypedDict, cast
+from typing import Protocol, TypedDict
 
 import structlog
-import uvicorn
 from mcp.server.fastmcp import FastMCP
 
 from local_rag.config import Config
 from local_rag.store import Store
-
-# ASGI 3.0 callable types — kept loose because the framework is third-party
-# and we wrap it without committing to a specific app class.
-_ASGIScope = dict[str, Any]
-_ASGIReceive = Callable[[], Awaitable[dict[str, Any]]]
-_ASGISend = Callable[[dict[str, Any]], Awaitable[None]]
-_ASGIApp = Callable[[_ASGIScope, _ASGIReceive, _ASGISend], Awaitable[None]]
 
 log = structlog.get_logger()
 
@@ -86,9 +75,7 @@ def build_tools(
 ) -> Tools:
     """Bind the store/embedder/config to a ``Tools`` payload of pure functions."""
 
-    def search(
-        query: str, sources: list[str] | None, k: int
-    ) -> list[SearchResult]:
+    def search(query: str, sources: list[str] | None, k: int) -> list[SearchResult]:
         if not query.strip():
             return []
         effective_k = max(_K_MIN, min(k, _K_MAX))
@@ -124,9 +111,7 @@ def build_tools(
         # config. `search` with `sources=None` only searches *currently*
         # configured sources, so the two views can disagree by design.
         counts = store.chunk_counts()
-        return [
-            SourceInfo(name=name, chunk_count=counts[name]) for name in sorted(counts)
-        ]
+        return [SourceInfo(name=name, chunk_count=counts[name]) for name in sorted(counts)]
 
     def index_status() -> IndexStatus:
         sources = list_sources()
@@ -170,104 +155,3 @@ def run_stdio(config: Config, store: Store, embedder: _Embedder) -> None:
     server = make_server(tools)
     log.info("mcp.stdio.starting", tools=["search", "list_sources", "index_status"])
     server.run(transport="stdio")
-
-
-def run_http(
-    config: Config,
-    store: Store,
-    embedder: _Embedder,
-    *,
-    host: str = "127.0.0.1",
-    port: int = 8765,
-    token: str | None = None,
-    cert_file: Path | None = None,
-    key_file: Path | None = None,
-) -> None:
-    """Start the MCP server over Streamable HTTP. Blocks until SIGINT/SIGTERM.
-
-    Health-checks the embedder before binding (so a broken Ollama exits
-    before we open the port). If ``token`` is provided, every incoming
-    request must carry ``Authorization: Bearer <token>`` or it receives
-    a 401. Token comparison is constant-time via :func:`hmac.compare_digest`.
-
-    If both ``cert_file`` and ``key_file`` are provided, uvicorn binds with
-    TLS and the server is reachable over ``https://``. Caller is responsible
-    for validating the files exist and are readable; we don't double-check.
-    """
-    embedder.health_check()
-    tools = build_tools(
-        store,
-        embedder,
-        configured_sources=[s.name for s in config.sources],
-    )
-    server = make_server(tools)
-    # Starlette is structurally an ASGI app (callable with the right signature)
-    # but mypy doesn't see the protocol match; cast to our alias.
-    app: _ASGIApp = cast(_ASGIApp, server.streamable_http_app())
-    if token:
-        app = _bearer_auth_middleware(app, token)
-    tls = cert_file is not None and key_file is not None
-    log.info(
-        "mcp.http.starting",
-        host=host,
-        port=port,
-        token_required=token is not None,
-        tls=tls,
-        # key path deliberately not logged
-        cert=str(cert_file) if cert_file else None,
-        tools=["search", "list_sources", "index_status"],
-    )
-    if cert_file is not None and key_file is not None:
-        uvicorn.run(
-            app, host=host, port=port, log_config=None,
-            ssl_certfile=str(cert_file), ssl_keyfile=str(key_file),
-        )
-    else:
-        uvicorn.run(app, host=host, port=port, log_config=None)
-
-
-def _bearer_auth_middleware(app: _ASGIApp, token: str) -> _ASGIApp:
-    """Wrap ``app`` with a pure-ASGI middleware that enforces a bearer token.
-
-    Non-HTTP scopes (lifespan, websocket) pass through unchanged — only
-    HTTP requests are gated. Auth comparison is constant-time over a
-    fixed-length SHA-256 digest of both sides, so neither the token's
-    length nor any prefix can be inferred from response timing.
-    """
-    expected_digest = hashlib.sha256(token.encode()).digest()
-
-    async def middleware(
-        scope: _ASGIScope, receive: _ASGIReceive, send: _ASGISend
-    ) -> None:
-        if scope.get("type") != "http":
-            await app(scope, receive, send)
-            return
-
-        header_value = b""
-        for name, value in scope.get("headers", []):
-            if name == b"authorization":
-                header_value = value
-                break
-
-        if not header_value.startswith(b"Bearer "):
-            await _send_401(send, b'{"error":"missing bearer token"}')
-            return
-        presented_digest = hashlib.sha256(header_value[len(b"Bearer ") :]).digest()
-        if not hmac.compare_digest(presented_digest, expected_digest):
-            await _send_401(send, b'{"error":"invalid bearer token"}')
-            return
-
-        await app(scope, receive, send)
-
-    return middleware
-
-
-async def _send_401(send: _ASGISend, body: bytes) -> None:
-    await send(
-        {
-            "type": "http.response.start",
-            "status": 401,
-            "headers": [(b"content-type", b"application/json")],
-        }
-    )
-    await send({"type": "http.response.body", "body": body, "more_body": False})

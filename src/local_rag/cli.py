@@ -12,7 +12,6 @@ Built around small seams the tests poke at:
 from __future__ import annotations
 
 import argparse
-import ipaddress
 import logging
 import os
 import sys
@@ -24,7 +23,7 @@ import structlog
 from local_rag.config import Config, ConfigError
 from local_rag.embedder import EmbedderError, OllamaEmbedder
 from local_rag.indexer import Indexer, IndexResult
-from local_rag.mcp_server import run_http, run_stdio
+from local_rag.mcp_server import run_stdio
 from local_rag.models import SearchHit
 from local_rag.paths import default_config_path
 from local_rag.store import Store
@@ -61,7 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "search":
         return _cmd_search(config, store, args.query, args.sources, args.k)
     if args.cmd == "mcp":
-        return _cmd_mcp(config, store, args)
+        return _cmd_mcp(config, store)
     parser.error(f"unknown command {args.cmd!r}")
     return 2  # unreachable; argparse.error exits
 
@@ -84,8 +83,7 @@ def _cmd_index(config: Config, store: Store, requested: list[str]) -> int:
         unknown = [n for n in requested if n not in by_name]
         if unknown:
             _err(
-                f"unknown source(s): {', '.join(unknown)}; "
-                f"configured: {', '.join(sorted(by_name))}"
+                f"unknown source(s): {', '.join(unknown)}; configured: {', '.join(sorted(by_name))}"
             )
             return 2
         targets = [by_name[n] for n in requested]
@@ -157,71 +155,7 @@ def _cmd_search(
     return 0
 
 
-def _validate_tls_args(
-    cert: Path | None, key: Path | None
-) -> tuple[Path | None, Path | None, str | None]:
-    """Validate the TLS pair. Returns (cert, key, error_message_or_None).
-
-    - Both None → plain HTTP. (None, None, None)
-    - Exactly one set → error: must be paired.
-    - Both set, but a file is missing/unreadable → error.
-    - Both set and readable → (cert, key, None).
-    """
-    if cert is None and key is None:
-        return None, None, None
-    if cert is None:
-        return None, None, "--key requires --cert (the two flags must be paired)"
-    if key is None:
-        return None, None, "--cert requires --key (the two flags must be paired)"
-    if not cert.is_file():
-        return None, None, f"--cert file does not exist or is not a regular file: {cert}"
-    if not key.is_file():
-        return None, None, f"--key file does not exist or is not a regular file: {key}"
-    return cert, key, None
-
-
-def _is_loopback_host(host: str) -> bool:
-    """True for ``localhost`` and any literal IPv4/IPv6 loopback address.
-
-    Accepts ``::1``, the bracketed ``[::1]`` URL form, the expanded
-    ``0:0:0:0:0:0:0:1``, and the IPv4-mapped ``::ffff:127.0.0.1`` variants —
-    none of these are reachable off the box.
-    """
-    if host == "localhost":
-        return True
-    try:
-        return ipaddress.ip_address(host.strip("[]")).is_loopback
-    except ValueError:
-        return False
-
-
-def _cmd_mcp(config: Config, store: Store, args: argparse.Namespace) -> int:
-    if args.transport == "http":
-        token = args.token or os.environ.get("LOCAL_RAG_MCP_TOKEN")
-        if not _is_loopback_host(args.host) and not token:
-            _err(
-                f"refusing to bind --host {args.host} without a token; "
-                "set --token or $LOCAL_RAG_MCP_TOKEN, or bind to 127.0.0.1"
-            )
-            return 2
-
-        cert_file, key_file, tls_error = _validate_tls_args(args.cert, args.key)
-        if tls_error is not None:
-            _err(tls_error)
-            return 2
-
-        try:
-            embedder = _build_embedder(config)
-            run_http(
-                config, store, embedder,
-                host=args.host, port=args.port, token=token,
-                cert_file=cert_file, key_file=key_file,
-            )
-        except EmbedderError as e:
-            _err(f"embedder unreachable: {e}")
-            return 3
-        return 0
-
+def _cmd_mcp(config: Config, store: Store) -> int:
     try:
         embedder = _build_embedder(config)
         run_stdio(config, store, embedder)
@@ -282,41 +216,20 @@ def _build_parser() -> argparse.ArgumentParser:
     p_search = sub.add_parser("search", help="hybrid search across sources")
     p_search.add_argument("query", metavar="QUERY")
     p_search.add_argument(
-        "--sources", nargs="+", default=None, metavar="SOURCE",
+        "--sources",
+        nargs="+",
+        default=None,
+        metavar="SOURCE",
         help="restrict to these source names (default: all configured)",
     )
     p_search.add_argument(
-        "-k", type=int, default=10, help="top-k hits to return (default: 10)",
+        "-k",
+        type=int,
+        default=10,
+        help="top-k hits to return (default: 10)",
     )
 
-    p_mcp = sub.add_parser("mcp", help="run the MCP server (stdio by default)")
-    p_mcp.add_argument(
-        "--transport", choices=["stdio", "http"], default="stdio",
-        help="transport: stdio (default) or streamable-http",
-    )
-    p_mcp.add_argument(
-        "--host", default="127.0.0.1",
-        help="bind host for --transport http (default: 127.0.0.1)",
-    )
-    p_mcp.add_argument(
-        "--port", type=int, default=8765,
-        help="bind port for --transport http (default: 8765)",
-    )
-    p_mcp.add_argument(
-        "--token", default=None,
-        help=(
-            "bearer token required on every HTTP request; falls back to "
-            "$LOCAL_RAG_MCP_TOKEN. Required when --host is not loopback."
-        ),
-    )
-    p_mcp.add_argument(
-        "--cert", type=Path, default=None,
-        help="TLS certificate file (PEM); requires --key. Enables HTTPS.",
-    )
-    p_mcp.add_argument(
-        "--key", type=Path, default=None,
-        help="TLS private key file (PEM); requires --cert.",
-    )
+    sub.add_parser("mcp", help="run the MCP server (stdio)")
 
     return parser
 
