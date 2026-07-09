@@ -15,7 +15,18 @@ golden-query set from **recall@5 = 0.000 / MRR = 0.000** to
       are heading-path/title term boosts or BM25-weighted blending.
 - [ ] **Grow the golden set** as new real queries succeed or fail in
       Cowork/Claude Code sessions (gitignored `eval/golden.local.toml`);
-      three queries is too few to trust the metrics' stability.
+      three queries is too few to trust the metrics' stability. An
+      independent audit (2026-07-09) confirmed the reported numbers but
+      flagged their k-sensitivity: recall@3 = 0.333, recall@10 = 1.000.
+- [ ] **Let lexical strength influence final ordering.** With cosine-only
+      ordering, an FTS-only candidate can never crack the top-k (the
+      vector leg already supplies ≥ k top-cosine candidates), so hybrid
+      currently returns the same top-k as pure vector search. Now that
+      BM25 scores are trustworthy (see FTS fix below), consider a
+      normalized blend; the remaining golden miss sits at true BM25 rank
+      16 and cosine file-rank 9, so a blend is the plausible lever. Add
+      an exact-keyword golden query first so the blend can't silently
+      regress lexical lookups.
 - [ ] **Down-weight list-heavy chunks** (>70% of lines are bullets) —
       deferred; the chunk cap + cosine ordering already demoted the
       keyword-dense list notes that motivated it.
@@ -53,6 +64,15 @@ migration path (`index --force` is the reindex path for chunker changes).
 - [x] **`context_chunks` parameter on `search`** (0–5) — stitches
       neighboring chunks onto each hit via char offsets (overlap
       deduplicated); matters for Cowork now that chunks are capped small.
+- [x] **Fix nondeterministic FTS results** (found by an independent audit
+      of the scoring change). LanceDB 0.30's native FTS misbehaves against
+      unmerged `merge_insert` deltas: `limit(n)` returns an arbitrary
+      unsorted sample (zero overlap with the true top-n on the live
+      table), scores use stale corpus statistics, and some corpora hide
+      matching rows entirely. Fixed twice over: `Store.optimize()` merges
+      deltas at the end of every indexing run, and `Store._fts_top()`
+      recovers exact score ordering at query time (fetch all match
+      scores light, sort, refetch top rows). Hybrid k=5 latency: ~100 ms.
 
 ## Decided / on hold
 

@@ -535,3 +535,52 @@ def test_search_hybrid_breaks_cosine_ties_by_fused_rank(store: Store) -> None:
     hits = store.search_hybrid(["vault"], query_text="tantivy engine", query_vector=v, k=4)
 
     assert hits[0].chunk.source_path == "/match.md"
+
+
+# ------------------------------------------------------ FTS determinism ---
+# LanceDB 0.30's native FTS misbehaves against unmerged merge_insert deltas:
+# limit(n) returns an arbitrary unsorted sample, scores use stale corpus
+# statistics, and some corpora hide matching rows entirely (verified
+# 2026-07-09). Store.optimize merges the deltas; _fts_top recovers true
+# score ordering at query time.
+
+
+def test_search_hybrid_fts_pass_finds_true_top_lexical_match(store: Store) -> None:
+    """After optimize, the strongest lexical match must carry its bm25 score
+    even when more rows match the query than the FTS candidate limit (50).
+    This exact corpus (term spanning two upsert batches) returns ZERO FTS
+    matches without the optimize call."""
+    store.ensure_table("vault")
+    query_vec = [1.0] + [0.0] * (DIM - 1)
+    # 59 filler docs, inserted first, each containing the term once.
+    fillers = [
+        _chunk(
+            path=f"/filler{i:02d}.md",
+            idx=0,
+            text=f"zebra mention number {i} in otherwise unrelated prose",
+            vector=[0.0, 1.0] + [0.0] * (DIM - 2),
+        )
+        for i in range(59)
+    ]
+    store.upsert_chunks("vault", fillers)
+    # The clear BM25 winner, inserted last (highest rowid).
+    store.upsert_chunks(
+        "vault",
+        [
+            _chunk(
+                path="/best.md",
+                idx=0,
+                text="zebra zebra zebra zebra herd",
+                vector=[0.9, 0.1] + [0.0] * (DIM - 2),  # near query: in vector pool
+            )
+        ],
+    )
+    store.optimize("vault")
+
+    hits = store.search_hybrid(["vault"], query_text="zebra", query_vector=query_vec, k=10)
+
+    best = next(h for h in hits if h.chunk.source_path == "/best.md")
+    assert best.bm25 is not None
+    others = [h.bm25 for h in hits if h.chunk.source_path != "/best.md" and h.bm25 is not None]
+    assert others, "scenario guard: fillers must carry bm25 too"
+    assert best.bm25 > max(others)

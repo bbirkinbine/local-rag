@@ -365,3 +365,28 @@ def test_store_file_hashes_reflects_state(store: Store, src_dir: Path) -> None:
     paths = set(hashes.keys())
     assert any(p.endswith("a.md") for p in paths)
     assert any(p.endswith("b.py") for p in paths)
+
+
+# ------------------------------------------------------- FTS consistency ---
+
+
+def test_index_source_leaves_fts_consistent_across_files(store: Store, tmp_path: Path) -> None:
+    """Each file is its own upsert batch; LanceDB 0.30 native FTS can hide
+    matches for terms that span unmerged index deltas (verified 2026-07-09:
+    a term present in two batches returned zero FTS matches). index_source
+    must leave the table optimized so lexical search is deterministic."""
+    src = tmp_path / "src"
+    for i in range(6):
+        _write(src / f"note{i}.md", f"# Note {i}\n\nzebra sighting number {i}\n")
+    indexer = Indexer(store, FakeEmbedder())
+
+    indexer.index_source(_make_source("vault", src, type_="markdown"))
+
+    hits = store.search_hybrid(
+        ["vault"],
+        query_text="zebra",
+        query_vector=[1.0] + [0.0] * (DIM - 1),
+        k=6,
+    )
+    with_bm25 = [h for h in hits if h.bm25 is not None]
+    assert len(with_bm25) == 6

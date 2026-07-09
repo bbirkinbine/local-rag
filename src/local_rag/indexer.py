@@ -139,6 +139,12 @@ class Indexer:
             )
             results.append(FileResult(path=Path(stale), status="deleted"))
 
+        # Merge index deltas whenever the table changed; unmerged deltas make
+        # FTS results incomplete and mis-ordered (see Store.optimize).
+        if any(r.status in ("embedded", "deleted", "empty") for r in results):
+            self._store.optimize(source.name)
+            log.info("indexer.optimized", source=source.name)
+
         return IndexResult(source_name=source.name, files=results)
 
     def _process_one(

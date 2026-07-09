@@ -20,6 +20,11 @@ from local_rag.models import Chunk, SearchHit
 # Reciprocal Rank Fusion constant. 60 is the BM25/RRF folklore default.
 _RRF_K = 60
 
+# Upper bound on FTS match rows scanned per query when recovering the true
+# top-n (see Store._fts_top). Effectively "all matches" — tables are <100k
+# rows in v1 — while still bounding a pathological query.
+_FTS_SCAN_LIMIT = 1_000_000
+
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     """Plain cosine similarity; 0.0 if either vector is all zeros."""
@@ -71,6 +76,19 @@ class Store:
         tbl = self._db.create_table(source_name, schema=self._schema())
         # Native LanceDB FTS — auto-updates on subsequent upserts.
         tbl.create_fts_index("text", use_tantivy=False, replace=True)
+
+    def optimize(self, source_name: str) -> None:
+        """Merge table/index deltas so FTS results are complete and ordered.
+
+        LanceDB 0.30's native FTS misbehaves against unmerged ``merge_insert``
+        deltas: ``limit(n)`` returns an arbitrary unsorted sample instead of
+        the top-n by score, per-row scores are computed from stale corpus
+        statistics, and for some corpora matching rows are hidden entirely
+        (all verified 2026-07-09). ``optimize()`` merges the deltas and
+        restores exact, ordered results. Costs seconds on a ~30k-row table —
+        call once per indexing run, not per upsert or per query.
+        """
+        self._db.open_table(source_name).optimize()
 
     def list_sources(self) -> list[str]:
         """Return the names of all tables in the DB, sorted alphabetically."""
@@ -199,10 +217,7 @@ class Store:
                 rrf[key] = rrf.get(key, 0.0) + 1.0 / (_RRF_K + rank)
                 chunks.setdefault(key, (name, self._row_to_chunk(row)))
 
-            for rank, row in enumerate(
-                tbl.search(query_text, query_type="fts").limit(expand).to_list(),
-                start=1,
-            ):
+            for rank, row in enumerate(self._fts_top(tbl, query_text, expand), start=1):
                 key = f"{name}::{row['id']}"
                 rrf[key] = rrf.get(key, 0.0) + 1.0 / (_RRF_K + rank)
                 chunks.setdefault(key, (name, self._row_to_chunk(row)))
@@ -223,6 +238,31 @@ class Store:
             )
             for key in ranked
         ]
+
+    # `Any`: lancedb table handle; no published type stubs (same as self._db).
+    def _fts_top(self, tbl: Any, query_text: str, n: int) -> list[dict[str, Any]]:  # noqa: ANN401
+        """True top-n FTS matches by BM25 score, best first.
+
+        LanceDB 0.30's native FTS returns ``limit(n)`` as an arbitrary
+        unsorted sample of matching rows, not the top-n by score (verified
+        2026-07-09 against a live 30k-row table: zero overlap with the true
+        top-n). Work around it in two phases: fetch ``(id, _score)`` for
+        every match (cheap — no text/vector payload), sort here, then fetch
+        the full rows for the true top-n by id.
+        """
+        light = (
+            tbl.search(query_text, query_type="fts").select(["id"]).limit(_FTS_SCAN_LIMIT).to_list()
+        )
+        if not light:
+            return []
+        light.sort(key=lambda r: -float(r["_score"]))
+        scores = {str(r["id"]): float(r["_score"]) for r in light[:n]}
+        id_list = ", ".join("'" + i.replace("'", "''") + "'" for i in scores)
+        rows = tbl.search().where(f"id IN ({id_list})").limit(len(scores)).to_list()
+        for row in rows:
+            row["_score"] = scores[str(row["id"])]
+        rows.sort(key=lambda r: -float(r["_score"]))
+        return list(rows)
 
     def expanded_text(
         self,
