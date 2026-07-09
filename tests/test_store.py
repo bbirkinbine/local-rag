@@ -376,9 +376,7 @@ def test_search_hybrid_exposes_bm25_for_lexical_hits(store: Store) -> None:
         ],
     )
 
-    hits = store.search_hybrid(
-        ["vault"], query_text="quantum entanglement", query_vector=near, k=5
-    )
+    hits = store.search_hybrid(["vault"], query_text="quantum entanglement", query_vector=near, k=5)
 
     by_path = {h.chunk.source_path: h for h in hits}
     assert by_path["/lex.md"].bm25 is not None

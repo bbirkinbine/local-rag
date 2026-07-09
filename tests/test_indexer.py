@@ -120,9 +120,20 @@ def test_discovery_respects_gitignore_when_enabled(tmp_path: Path) -> None:
     """git ls-files filters out anything ignored, including build dirs."""
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit",
-         "--allow-empty", "-m", "init", "-q"],
-        cwd=tmp_path, check=True,
+        [
+            "git",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "user.name=t",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "init",
+            "-q",
+        ],
+        cwd=tmp_path,
+        check=True,
     )
     _write(tmp_path / ".gitignore", "build/\nsecret.py\n")
     _write(tmp_path / "keep.py", "x\n")
@@ -174,9 +185,7 @@ def test_indexer_first_run_embeds_everything(store: Store, src_dir: Path) -> Non
     assert store.chunk_counts()["vault"] >= 2
 
 
-def test_indexer_second_run_no_changes_skips_embedding(
-    store: Store, src_dir: Path
-) -> None:
+def test_indexer_second_run_no_changes_skips_embedding(store: Store, src_dir: Path) -> None:
     _write(src_dir / "a.md", "# A\n\nbody\n")
     src = _make_source("vault", src_dir)
     Indexer(store, FakeEmbedder()).index_source(src)
@@ -221,9 +230,7 @@ def test_indexer_deletes_files_gone_from_disk(store: Store, src_dir: Path) -> No
     assert any(p.endswith("b.py") for p in remaining_paths)
 
 
-def test_indexer_adds_new_files_on_subsequent_run(
-    store: Store, src_dir: Path
-) -> None:
+def test_indexer_adds_new_files_on_subsequent_run(store: Store, src_dir: Path) -> None:
     _write(src_dir / "a.md", "# A\n\nx\n")
     src = _make_source("vault", src_dir)
     Indexer(store, FakeEmbedder()).index_source(src)
@@ -256,9 +263,7 @@ def test_indexer_marks_oversize_files(store: Store, src_dir: Path) -> None:
     assert [fr.status for fr in result.files] == ["skipped_oversize"]
 
 
-def test_indexer_oversize_file_does_not_get_orphan_deleted(
-    store: Store, src_dir: Path
-) -> None:
+def test_indexer_oversize_file_does_not_get_orphan_deleted(store: Store, src_dir: Path) -> None:
     """A previously-indexed file that grows past the cap stays in the result as
     oversize, not double-reported as deleted + oversize."""
     p = _write(src_dir / "a.md", "# A\n\nshort\n")
@@ -306,9 +311,7 @@ def test_indexer_unreadable_file_is_surfaced(
     assert by_name == {"good.md": "embedded", "bad.md": "skipped_unreadable"}
 
 
-def test_indexer_embedder_error_does_not_stop_other_files(
-    store: Store, src_dir: Path
-) -> None:
+def test_indexer_embedder_error_does_not_stop_other_files(store: Store, src_dir: Path) -> None:
     _write(src_dir / "good.md", "# good\n\nharmless\n")
     _write(src_dir / "bad.md", "# bad\n\nPOISON content\n")
     src = _make_source("vault", src_dir)

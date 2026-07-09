@@ -110,11 +110,7 @@ def test_markdown_unclosed_frontmatter_is_treated_as_content() -> None:
 
 
 def test_markdown_round_trip_offsets_match_text() -> None:
-    text = (
-        "# A\n\nalpha body\n\n"
-        "## B\n\nbeta body\n\n"
-        "# C\n\ngamma body\n"
-    )
+    text = "# A\n\nalpha body\n\n## B\n\nbeta body\n\n# C\n\ngamma body\n"
     chunks = chunk_markdown(text, source_path="/a.md", file_hash="h")
 
     for c in chunks:

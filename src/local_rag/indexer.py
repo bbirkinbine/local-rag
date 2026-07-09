@@ -127,9 +127,7 @@ class Indexer:
             if entry.oversize:
                 results.append(FileResult(path=entry.path, status="skipped_oversize"))
             else:
-                results.append(
-                    self._process_one(source.name, entry.path, stored, force=force)
-                )
+                results.append(self._process_one(source.name, entry.path, stored, force=force))
 
         for stale in sorted(set(stored) - seen_paths):
             removed = self._store.delete_file(source.name, stale)
@@ -175,9 +173,7 @@ class Indexer:
             return FileResult(path=file, status="error", error=str(e))
 
         if len(vectors) != len(chunks):
-            err = (
-                f"embedder returned {len(vectors)} vectors for {len(chunks)} chunks"
-            )
+            err = f"embedder returned {len(vectors)} vectors for {len(chunks)} chunks"
             log.warning("indexer.embed_shape", path=str(file), error=err)
             return FileResult(path=file, status="error", error=err)
 
@@ -242,9 +238,7 @@ def _iter_source_files(
     allowed_extensions: frozenset[str] = ALLOWED_EXTENSIONS,
 ) -> Iterator[Path]:
     """Yield non-oversize, allowlisted files. Thin wrapper around ``_walk_entries``."""
-    for entry in _walk_entries(
-        source, max_bytes=max_bytes, allowed_extensions=allowed_extensions
-    ):
+    for entry in _walk_entries(source, max_bytes=max_bytes, allowed_extensions=allowed_extensions):
         if not entry.oversize:
             yield entry.path
 

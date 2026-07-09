@@ -146,8 +146,7 @@ def chunk_code(
     step = window_lines - overlap_lines
     if step <= 0:
         raise ValueError(
-            f"window_lines ({window_lines}) must be greater than "
-            f"overlap_lines ({overlap_lines})"
+            f"window_lines ({window_lines}) must be greater than overlap_lines ({overlap_lines})"
         )
 
     lines = text.splitlines(keepends=True)

@@ -400,9 +400,7 @@ sources = "vault"
         Config.load(cfg_path)
 
 
-def test_ignore_with_non_string_entry_raises(
-    tmp_path: Path, vault_dir: Path
-) -> None:
+def test_ignore_with_non_string_entry_raises(tmp_path: Path, vault_dir: Path) -> None:
     cfg_path = _write(
         tmp_path / "config.toml",
         f"""

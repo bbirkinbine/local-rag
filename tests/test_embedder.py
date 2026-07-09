@@ -114,9 +114,7 @@ def test_embed_default_batch_size_used_for_modest_input() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         call_count["n"] += 1
         body = json.loads(request.content)
-        return httpx.Response(
-            200, json={"embeddings": [[0.0] * DIM] * len(body["input"])}
-        )
+        return httpx.Response(200, json={"embeddings": [[0.0] * DIM] * len(body["input"])})
 
     with _embedder(handler) as e:
         e.embed(["x"] * 10)
