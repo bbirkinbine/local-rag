@@ -48,12 +48,12 @@ A small Python tool that indexes the Obsidian vault and selected source repos in
 - **Don't** index by default. Every source must be opt-in via a `[[sources]]` block in the config; third-party clones under `~/Downloads/src/` stay invisible unless explicitly added.
 - `pyproject.toml` `[tool.uv]` section — ask first.
 
-## Open work / current state (updated 2026-05-11)
+## Open work / current state (updated 2026-07-09)
 
-- Bootstrap complete from the agentic starter-files; no implementation code under `src/local_rag/` yet.
+- Implementation complete through the stdio MCP server; both Claude Code and Cowork integrations verified end-to-end. The HTTP/HTTPS transport was removed 2026-07-09 (no consumers — stdio only).
 - Full spec at `docs/specs/local-rag.md` — read this before any slice.
-- Next: implement in vertical slices via the agentic loop (planner → test-first → implement → reviewer). Proposed order: config/paths → embedder client → store → chunkers → indexer → CLI → MCP server.
-- `uv sync` not run yet — happens at the start of the first slice so the lockfile reflects an actual import graph.
+- Open work is tracked in `TODO.md`. Active front: retrieval ranking quality (eval harness → chunk-size caps → score transparency).
+- **Never commit personal vault paths or note names** — golden-query eval data lives in gitignored `*.local.toml` files.
 
 ## Repository / publishing
 

@@ -107,11 +107,45 @@ Once installed (`uv pip install -e .`):
 - Don't assume Ollama is running. Health-check on CLI startup; surface a clear error.
 - Don't index by default — every source must be opt-in via config (the allowlist rule).
 
-## Open work / current state (2026-05-11)
+## Positioning vs. frontier agentic search (reviewed 2026-07-08)
 
-- Spec written; bootstrap landed in the repo (CLAUDE.md, pyproject, hooks, subagents). No implementation code yet.
-- Project lives at `~/Downloads/src/local-rag/`.
-- Next: vertical-slice implementation via the agentic loop (planner → test-first → implement → reviewer). Proposed order: config/paths → embedder client → store → chunkers → indexer → CLI → MCP server.
+Frontier coding agents retrieve by iterative grep + file reads, which changes
+what this project is for. Conclusions from a design review against current
+model capabilities:
+
+- **Code search inside the agent's working repo is not the value.** Agentic
+  grep beats line-window embedding chunks there — it's why Claude Code ships
+  without an embedding index. Expect `search` to be rarely called for
+  in-repo code. Corollary: don't build tree-sitter chunking until usage
+  evidence shows the tool is actually used for code.
+- **The vault is the core use case.** Grep needs lexical anchors; "notes
+  semantically related to this one that share no keywords" is the case
+  agentic search can't solve and embeddings can. Under the no-cloud
+  constraint, a local index is the correct tool, not a legacy pattern.
+- **Cross-corpus access is an access gap, not a reasoning gap.** No model
+  capability lets Claude Code see the vault or lets Cowork see local repos;
+  the MCP bridge does. This value is independent of model improvements.
+- **The calling LLM is the reranker.** A frontier model reading top-k hybrid
+  hits and picking the relevant ones replaces a local cross-encoder pass —
+  the deferred `bge-reranker` item is likely "never" rather than "later".
+- **Tool descriptions decide adoption.** The model chooses between its
+  built-in grep and `search` per query; the description must state when
+  `search` wins (conceptual similarity without shared keywords; content
+  outside the current project) or it goes uncalled.
+
+## Open work / current state (2026-07-09)
+
+- Implementation complete through the MCP server: config/paths, embedder
+  client, store, chunkers, indexer, CLI, and the stdio MCP server (slices
+  01–07) are all shipped with tests.
+- The HTTP/HTTPS transport (slices 08–09) was built and later **removed**
+  (2026-07-09): both first-party clients use stdio, so it had no consumer.
+  The slice specs remain as historical record.
+- Both integrations verified end-to-end: Claude Code (`claude mcp add -s
+  user`) and Cowork (stdio entry in `claude_desktop_config.json` — the
+  slice 10 plugin scaffolding turned out to be unnecessary and was deleted).
+- Open work is tracked in `TODO.md`; the active front is retrieval ranking
+  quality (eval harness, chunk-size caps, score transparency).
 
 ## References
 

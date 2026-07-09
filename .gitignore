@@ -14,3 +14,6 @@ build/
 .claude/settings.local.json
 .env
 .env.*
+
+# Personal golden-query eval data (real vault paths) — never commit
+*.local.toml
