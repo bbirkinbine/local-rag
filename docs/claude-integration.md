@@ -1,34 +1,36 @@
 # Integrating local-rag with Claude apps
 
 `local-rag` exposes three MCP tools (`search`, `list_sources`,
-`index_status`) over two transports (stdio, Streamable HTTP). What
-works where depends on the client.
+`index_status`) over a stdio MCP server. Both first-party clients spawn
+that server themselves — there is no long-running process to manage.
 
 ## Capability matrix
 
-| Client                       | Transports it accepts                    | Recommended           | local-rag status                  |
-|------------------------------|------------------------------------------|-----------------------|-----------------------------------|
-| Claude Code (CLI + VS Code)  | stdio, HTTP, HTTPS                       | **stdio**             | ✓ Fully supported                 |
-| Claude Cowork (desktop)      | **HTTPS only** (no plain HTTP, no stdio) | **HTTPS (loopback)**  | ✓ Fully supported                 |
-| Claude.ai (web)              | HTTPS only, public URL                   | none                  | ✗ Not recommended (see below)     |
+| Client                       | How it reaches local-rag                          | local-rag status |
+|------------------------------|---------------------------------------------------|------------------|
+| Claude Code (CLI + VS Code)  | stdio, registered via `claude mcp add`            | ✓ Supported      |
+| Claude Cowork (desktop)      | stdio, via `claude_desktop_config.json`           | ✓ Supported      |
+| Claude.ai (web)              | remote MCP only (public HTTPS URL)                | ✗ Not supported  |
 
-The rest of this doc walks each one. Pick the section that matches your
-client.
+An HTTP/HTTPS transport existed in earlier revisions but was removed once
+both first-party clients settled on stdio. If some other MCP client needs
+HTTP, front the stdio server with a generic adapter such as `mcp-proxy`.
 
 ---
 
 ## Claude Code (CLI and VS Code)
 
-Stdio is the right transport here — Claude Code auto-spawns the server
-per session, no separate process to keep alive.
+Claude Code auto-spawns the server per session; nothing to keep alive.
 
 ### Setup (one-time)
 
 ```bash
-claude mcp add local-rag -- uv --directory /path/to/local-rag run local-rag mcp
+claude mcp add -s user local-rag -- uv --directory /path/to/local-rag run local-rag mcp
 ```
 
 Replace `/path/to/local-rag` with the absolute path to your clone.
+`-s user` registers the server at user scope so it's available in every
+project, not just the directory you happened to run the command from.
 
 ### Verify
 
@@ -60,106 +62,63 @@ model toward the right tool.
 
 ## Claude Cowork (desktop)
 
-Cowork's connector layer only accepts remote MCP (HTTP / Streamable
-HTTP), not stdio. So you run `local-rag` as a long-lived HTTP server and
-point Cowork at the URL.
+Cowork bridges MCP servers configured in Claude Desktop's
+`claude_desktop_config.json` — it does **not** read Claude Code's
+`~/.claude.json`, and it has no folder-based plugin install. A plain
+`mcpServers` stdio entry in the desktop config is the documented path
+for a local server.
 
 ### Setup
 
-Cowork requires `https://` URLs even for loopback — it rejects plain
-HTTP. You'll need a locally-trusted TLS cert; see
-[tls-setup.md](tls-setup.md) for the full mkcert walkthrough, cert
-rotation, and verification commands. Quick version:
+Edit `~/Library/Application Support/Claude/claude_desktop_config.json`
+(create it if it doesn't exist) and add:
 
-```bash
-brew install mkcert
-mkcert -install
-mkdir -p ~/.config/local-rag && cd $_
-mkcert localhost 127.0.0.1 ::1
+```json
+{
+  "mcpServers": {
+    "local-rag": {
+      "command": "/opt/homebrew/bin/uv",
+      "args": [
+        "--directory",
+        "/path/to/local-rag",
+        "run",
+        "local-rag",
+        "mcp"
+      ]
+    }
+  }
+}
 ```
 
-**1. Run the server with TLS.** For a quick test:
+Two path gotchas:
 
-```bash
-uv run local-rag mcp --transport http --port 8765 \
-  --cert ~/.config/local-rag/localhost+2.pem \
-  --key  ~/.config/local-rag/localhost+2-key.pem
-```
+- **Use an absolute path to `uv`.** GUI apps don't inherit your shell's
+  PATH. `which uv` tells you where yours is — commonly
+  `/opt/homebrew/bin/uv` (Apple Silicon Homebrew) or
+  `~/.local/bin/uv` (the uv installer; spell out `/Users/<you>/...`).
+- **Use the absolute path to your clone** for `--directory`.
 
-For "always-on" (recommended), see
-[deployment.md](deployment.md#http-server-lifetime) — `launchd`
-LaunchAgent is the Mac-native choice; auto-starts at login, restarts on
-crash.
+### Verify from a chat
 
-**2. Add it in Cowork.** Cowork's MCP settings panel (location depends on
-your build — usually Settings → MCP / Connectors → Add custom server)
-takes:
-
-- **URL**: `https://localhost:8765/mcp`
-- **Auth**: none required for the loopback default
-
-**3. Restart Cowork** so the new connector is loaded.
-
-### Security defaults
-
-The server binds to `127.0.0.1` only — reachable from Cowork on the same
-Mac, not from anywhere else. If you'd rather run the server on a
-different machine (LAN), you'll need a bearer token; see
-[README.md](../README.md#claude-cowork) and
-[deployment.md](deployment.md#with-a-bearer-token).
-
-### Verify
-
-```bash
-lsof -i :8765
-# Expected: a Python process LISTENing on the configured port
-```
-
-Then in Cowork, ask something the model would route to local-rag:
+Fully restart the Claude desktop app (quit, not just close the window)
+so the new server is loaded. Then in a Cowork chat, ask something the
+model would route to local-rag:
 
 > "Use local-rag to tell me what sources are indexed."
 
 If the model calls `list_sources` you'll see the results. If it doesn't
-call any tool, name `local-rag` explicitly — Cowork's tool-selection
-heuristics vary by build.
-
-### Stopping it
-
-```bash
-# If you ran it via launchd:
-launchctl unload ~/Library/LaunchAgents/com.bbirkinbine.local-rag-mcp.plist
-
-# If you ran it ad-hoc:
-lsof -i :8765         # find PID
-kill <PID>
-```
+call any tool, name `local-rag` explicitly — tool-selection heuristics
+vary by build.
 
 ---
 
 ## Claude.ai (web)
 
-Short answer: **not recommended**. The web app accepts remote MCP servers
-via custom connectors, but the URL has to be reachable over the public
-internet. `local-rag` is local-first by design — exposing it to the
-internet violates the privacy model the project exists to preserve.
-
-### What it would take (and why we don't document the specifics)
-
-You'd need:
-
-1. A tunnel (ngrok, cloudflared, Tailscale Funnel) pointing at your
-   local `local-rag` HTTP server.
-2. A strong bearer token configured into both the server and the
-   connector.
-3. The tunnel provider sees the encrypted traffic only if you're using a
-   real tunnel-with-TLS — many free tiers terminate TLS at their edge,
-   meaning they can read every query and every result.
-
-That last point is the killer. The project rule is "no cloud APIs, no
-API keys, no telemetry"; routing your private vault through ngrok's
-edge is a category of "cloud API" we explicitly avoid.
-
-### What to use instead on web
+Short answer: **not supported**. The web app only accepts remote MCP
+servers reachable over the public internet. `local-rag` is local-first
+by design — tunneling your private vault through a public endpoint
+violates the privacy model the project exists to preserve, so we don't
+document a route.
 
 For the web client, the alternative is claude.ai's own **Projects**
 feature with attached knowledge files. Trade-offs vs local-rag:
@@ -183,7 +142,7 @@ Code / Cowork where local-rag is wired up.
 You don't invoke tools directly. The model decides whether and when to
 call `search` / `list_sources` / `index_status` based on the
 conversation, the system prompt the client uses, and the tool
-descriptions in [mcp_server.py](../src/local_rag/mcp_server.py#L120).
+descriptions in [mcp_server.py](../src/local_rag/mcp_server.py).
 
 ### Prompts that tend to trigger a search
 
@@ -214,30 +173,25 @@ shell uses the same config loader and prints a friendlier error.
 MCP servers are loaded at session start; `mcp add` doesn't retroactively
 inject into running sessions.
 
-**Cowork: connector status flips between "Connected" and "Failed"** —
-The server died or wasn't running when Cowork tried to reconnect. Check
-`~/.local/state/local-rag/http.log` (if you used the launchd setup from
-[deployment.md](deployment.md)) for the underlying error.
+**Cowork: server doesn't appear after editing the config** — Fully quit
+and relaunch the desktop app; the config is read at startup. Then check
+the JSON parses (`python3 -m json.tool < .../claude_desktop_config.json`).
 
-**Cowork: "failed to add" or "connection error" even though `curl`
-against the same URL succeeds** — Cowork's TLS validation is stricter
-than `curl`'s. mkcert certs aren't in Certificate Transparency logs,
-which macOS App Transport Security can reject before any socket opens.
-See [tls-setup.md → "Cowork rejects the connection even though `curl`
-works"](tls-setup.md#cowork-rejects-the-connection-even-though-curl-works)
-for the full diagnostic ladder (tcpdump, unified log inspection, IPv6
-binding, Tailscale Serve as the real-cert workaround).
+**Cowork: server listed but fails to start** — Almost always the `uv`
+path. GUI apps don't inherit shell PATH, so `"command": "uv"` fails
+even though `uv` works in your terminal; use the absolute path from
+`which uv`.
 
-**Cowork: tools register but every call returns "embedder unreachable"
-— Ollama isn't running on the URL in your config, or doesn't have
-`bge-m3` pulled. `ollama list` and `curl
-http://localhost:11434/api/tags` are the usual diagnostics.
+**Any client: every call returns "embedder unreachable"** — Ollama
+isn't running on the URL in your config, or doesn't have `bge-m3`
+pulled. `ollama list` and `curl http://localhost:11434/api/tags` are
+the usual diagnostics.
 
 **Any client: empty results for every query** — Confirm the index ran
 and has rows: `uv run local-rag list`. If counts are zero or look wrong,
 re-run `uv run local-rag index` and check stderr for errors.
 
-**Any client: stale results after editing the vault** — The HTTP server
+**Any client: stale results after editing the vault** — The server
 reads a fresh table snapshot per query, so results reflect indexed
-state, not disk state. Re-run `uv run local-rag index` (or wait for the
-next cron / launchd tick) to refresh.
+state, not disk state. Re-run `uv run local-rag index` (or set up a
+schedule; see [deployment.md](deployment.md)) to refresh.

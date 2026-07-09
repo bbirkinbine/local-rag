@@ -53,7 +53,6 @@ ollama pull bge-m3
 - Configure what gets indexed → [`docs/configuration.md`](docs/configuration.md)
 - Use it from the CLI → [`docs/cli.md`](docs/cli.md)
 - Wire it into a Claude client → [`docs/claude-integration.md`](docs/claude-integration.md)
-  (Cowork plugin scaffolding: [`claude-plugin/`](claude-plugin/))
 - Run on a schedule (cron, `launchd`) → [`docs/deployment.md`](docs/deployment.md)
 - Full spec → [`docs/specs/local-rag.md`](docs/specs/local-rag.md)
 - Open work / known gaps → [`TODO.md`](TODO.md)
