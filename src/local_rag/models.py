@@ -32,11 +32,11 @@ class Chunk:
 class SearchHit:
     """A search result. ``score`` is uniformly higher-is-better across rankers.
 
-    ``cosine`` is the raw cosine similarity of the chunk to the query — the
-    ordering signal for hybrid search and the value to threshold on. ``bm25``
-    is the raw FTS score when the chunk matched lexically, else ``None``.
-    ``score`` is the ranker's fused RRF value (cosine for vector-only
-    search), kept for diagnostics; it encodes candidate rank, not strength.
+    ``score`` is the final ranking value: for hybrid search, cosine plus a
+    small saturating keyword boost; for vector-only search, plain cosine.
+    ``cosine`` and ``bm25`` are the raw signals behind it — ``cosine`` is the
+    value to threshold on for hit strength, ``bm25`` is ``None`` when the
+    chunk had no lexical match.
     """
 
     source_name: str

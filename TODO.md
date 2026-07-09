@@ -18,15 +18,6 @@ golden-query set from **recall@5 = 0.000 / MRR = 0.000** to
       three queries is too few to trust the metrics' stability. An
       independent audit (2026-07-09) confirmed the reported numbers but
       flagged their k-sensitivity: recall@3 = 0.333, recall@10 = 1.000.
-- [ ] **Let lexical strength influence final ordering.** With cosine-only
-      ordering, an FTS-only candidate can never crack the top-k (the
-      vector leg already supplies ≥ k top-cosine candidates), so hybrid
-      currently returns the same top-k as pure vector search. Now that
-      BM25 scores are trustworthy (see FTS fix below), consider a
-      normalized blend; the remaining golden miss sits at true BM25 rank
-      16 and cosine file-rank 9, so a blend is the plausible lever. Add
-      an exact-keyword golden query first so the blend can't silently
-      regress lexical lookups.
 - [ ] **Down-weight list-heavy chunks** (>70% of lines are bullets) —
       deferred; the chunk cap + cosine ordering already demoted the
       keyword-dense list notes that motivated it.
@@ -64,6 +55,15 @@ migration path (`index --force` is the reindex path for chunker changes).
 - [x] **`context_chunks` parameter on `search`** (0–5) — stitches
       neighboring chunks onto each hit via char offsets (overlap
       deduplicated); matters for Cowork now that chunks are capped small.
+- [x] **Lexical blend in final ordering** — the ranking value is now
+      `cosine + 0.15 * bm25/(bm25+10)`: a saturating keyword boost that
+      wins near-ties (identifier and note-title lookups) but can't bridge
+      a real semantic gap. Motivated by two exact-keyword golden queries
+      added first as guards: one (a code identifier) was a complete miss
+      under cosine-only ordering despite being the true BM25 #1. Eval on
+      the 5-query set: recall@5 0.600 -> 0.800, MRR 0.340 -> 0.500 (the
+      original 3 queries: recall unchanged, MRR 0.400 -> 0.500). Hybrid
+      is also no longer structurally identical to vector-only search.
 - [x] **Fix nondeterministic FTS results** (found by an independent audit
       of the scoring change). LanceDB 0.30's native FTS misbehaves against
       unmerged `merge_insert` deltas: `limit(n)` returns an arbitrary

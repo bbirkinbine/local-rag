@@ -25,6 +25,22 @@ _RRF_K = 60
 # rows in v1 — while still bounding a pathological query.
 _FTS_SCAN_LIMIT = 1_000_000
 
+# Lexical blend: final ranking value = cosine + WEIGHT * bm25/(bm25 + PIVOT).
+# The boost saturates below WEIGHT, so a strong exact-keyword match wins
+# cosine near-ties (identifier/title lookups sit ~0.02-0.05 behind topical
+# noise; see eval 2026-07-09) but can never bridge a large semantic gap.
+# PIVOT is the bm25 score at which half the boost is earned (live-index
+# lexical hits score ~5-22).
+_BM25_BLEND_WEIGHT = 0.15
+_BM25_BLEND_PIVOT = 10.0
+
+
+def _bm25_boost(bm25: float | None) -> float:
+    """Saturating lexical boost in ``[0, _BM25_BLEND_WEIGHT)``; 0 for no match."""
+    if bm25 is None or bm25 <= 0.0:
+        return 0.0
+    return _BM25_BLEND_WEIGHT * bm25 / (bm25 + _BM25_BLEND_PIVOT)
+
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
     """Plain cosine similarity; 0.0 if either vector is all zeros."""
@@ -184,19 +200,19 @@ class Store:
         query_vector: list[float],
         k: int,
     ) -> list[SearchHit]:
-        """Hybrid search: RRF fusion for recall, cosine re-scoring for order.
+        """Hybrid search: both modalities gather candidates; cosine plus a
+        bounded lexical boost orders them.
 
         Both modalities contribute candidates (top ``max(4*k, 50)`` each per
-        source), fused via Reciprocal Rank Fusion. The final ordering is raw
-        cosine similarity to the query across the whole fused pool — RRF rank
-        alone let keyword-dense chunks with weak semantic similarity beat
-        strongly-similar notes (2026-07-09 stress test) — with the RRF value
-        breaking cosine ties so exact-keyword matches still win among
-        semantic equals.
+        source). The final ranking value is ``cosine + boost(bm25)`` where the
+        boost saturates below ``_BM25_BLEND_WEIGHT``: raw RRF ordering let
+        keyword-dense chunks with weak semantic similarity beat strongly
+        similar notes, while cosine-only ordering made exact-keyword lookups
+        (identifiers, note titles) unreachable — the blend fixes both
+        (2026-07-09 eval). RRF rank breaks exact ties.
 
-        Each hit carries ``cosine`` (the ordering signal), ``bm25`` (raw FTS
-        score when the chunk matched lexically), and ``score`` (the RRF
-        fusion value, kept for diagnostics).
+        Each hit carries ``score`` (the final ranking value), plus the raw
+        signals ``cosine`` and ``bm25`` (``None`` without a lexical match).
         """
         if not source_names:
             return []
@@ -227,12 +243,13 @@ class Store:
             key: _cosine_similarity(query_vector, chunk.vector)
             for key, (_, chunk) in chunks.items()
         }
-        ranked = sorted(rrf, key=lambda key: (-cosine[key], -rrf[key]))[:k]
+        final = {key: cosine[key] + _bm25_boost(bm25.get(key)) for key in chunks}
+        ranked = sorted(rrf, key=lambda key: (-final[key], -rrf[key]))[:k]
         return [
             SearchHit(
                 source_name=chunks[key][0],
                 chunk=chunks[key][1],
-                score=rrf[key],
+                score=final[key],
                 cosine=cosine[key],
                 bm25=bm25.get(key),
             )

@@ -584,3 +584,94 @@ def test_search_hybrid_fts_pass_finds_true_top_lexical_match(store: Store) -> No
     others = [h.bm25 for h in hits if h.chunk.source_path != "/best.md" and h.bm25 is not None]
     assert others, "scenario guard: fillers must carry bm25 too"
     assert best.bm25 > max(others)
+
+
+# ---------------------------------------------------------- lexical blend ---
+# Final ranking value: cosine plus a small, bounded keyword boost
+# (W * bm25 / (bm25 + pivot)), so strong lexical matches can win near-ties
+# but can never bridge a large semantic gap.
+
+
+def test_search_hybrid_lexical_boost_wins_near_tie(store: Store) -> None:
+    """A strong exact-keyword match slightly behind on cosine must outrank
+    a keyword-free chunk — the '_fts_top identifier lookup' failure mode."""
+    store.ensure_table("vault")
+    store.upsert_chunks(
+        "vault",
+        [
+            # Slightly closer to the query vector, but no query terms.
+            _chunk(
+                path="/nearby.md",
+                idx=0,
+                text="totally unrelated prose",
+                vector=[1.0, 0.05, 0, 0, 0, 0, 0, 0],
+            ),
+            # Slightly further, but the clear lexical match.
+            _chunk(
+                path="/exact.md",
+                idx=0,
+                text="the tantivy engine builds the index",
+                vector=[1.0, 0.25, 0, 0, 0, 0, 0, 0],
+            ),
+            _chunk(
+                path="/f1.md", idx=0, text="alpha beta gamma", vector=[0.0] * 2 + [1.0] + [0.0] * 5
+            ),
+            _chunk(
+                path="/f2.md",
+                idx=0,
+                text="delta epsilon zeta",
+                vector=[0.0] * 3 + [1.0] + [0.0] * 4,
+            ),
+            _chunk(
+                path="/f3.md", idx=0, text="eta theta iota", vector=[0.0] * 4 + [1.0] + [0.0] * 3
+            ),
+        ],
+    )
+    store.optimize("vault")
+
+    hits = store.search_hybrid(
+        ["vault"],
+        query_text="tantivy engine",
+        query_vector=[1.0, 0, 0, 0, 0, 0, 0, 0],
+        k=3,
+    )
+
+    by_path = {h.chunk.source_path: h for h in hits}
+    assert by_path["/exact.md"].bm25 is not None  # scenario guard
+    assert by_path["/nearby.md"].cosine > by_path["/exact.md"].cosine  # scenario guard
+    assert hits[0].chunk.source_path == "/exact.md"
+
+
+def test_search_hybrid_score_is_cosine_plus_bounded_boost(store: Store) -> None:
+    """`score` is the final ranking value: equal to cosine for keyword-free
+    hits, strictly greater (by less than the boost cap) for lexical hits."""
+    store.ensure_table("vault")
+    store.upsert_chunks(
+        "vault",
+        [
+            _chunk(path="/lex.md", idx=0, text="the tantivy engine", vector=[1.0] + [0.0] * 7),
+            _chunk(path="/sem.md", idx=0, text="unrelated prose", vector=[0.9, 0.1] + [0.0] * 6),
+            _chunk(
+                path="/f1.md", idx=0, text="alpha beta gamma", vector=[0.0] * 2 + [1.0] + [0.0] * 5
+            ),
+            _chunk(
+                path="/f2.md", idx=0, text="delta epsilon", vector=[0.0] * 3 + [1.0] + [0.0] * 4
+            ),
+        ],
+    )
+    store.optimize("vault")
+
+    hits = store.search_hybrid(
+        ["vault"],
+        query_text="tantivy engine",
+        query_vector=[1.0] + [0.0] * 7,
+        k=4,
+    )
+
+    by_path = {h.chunk.source_path: h for h in hits}
+    lex, sem = by_path["/lex.md"], by_path["/sem.md"]
+    assert lex.bm25 is not None  # scenario guard
+    assert lex.score > lex.cosine
+    assert lex.score < lex.cosine + 0.2  # boost is bounded
+    assert sem.bm25 is None
+    assert sem.score == pytest.approx(sem.cosine)
