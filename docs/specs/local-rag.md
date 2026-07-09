@@ -144,8 +144,12 @@ model capabilities:
 - Both integrations verified end-to-end: Claude Code (`claude mcp add -s
   user`) and Cowork (stdio entry in `claude_desktop_config.json` — the
   slice 10 plugin scaffolding turned out to be unnecessary and was deleted).
-- Open work is tracked in `TODO.md`; the active front is retrieval ranking
-  quality (eval harness, chunk-size caps, score transparency).
+- The retrieval ranking-quality front (2026-07-09) shipped: a golden-query
+  eval harness (`local-rag eval`), a ~1,200-char markdown chunk cap with
+  overlap, score transparency (`cosine`/`bm25` on every hit), final ranking
+  by cosine plus a bounded lexical boost, and workarounds for LanceDB 0.30
+  native-FTS delta bugs (`Store.optimize` per indexing run, exact top-n
+  recovery at query time). Remaining `TODO.md` items are wait-for-evidence.
 
 ## References
 

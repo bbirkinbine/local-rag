@@ -15,7 +15,7 @@ A small Python tool that indexes the Obsidian vault and selected source repos in
 ## How to run things
 
 - Install: `uv sync`
-- CLI: `uv run local-rag index | search "q" | list | mcp` (entry point `local_rag.cli:main`)
+- CLI: `uv run local-rag index | search "q" | list | eval | mcp` (entry point `local_rag.cli:main`)
 - Run tests: `uv run pytest`
 - Lint: `uv run ruff check . && uv run ruff format --check .`
 - Type-check: `uv run mypy src/`
@@ -52,7 +52,7 @@ A small Python tool that indexes the Obsidian vault and selected source repos in
 
 - Implementation complete through the stdio MCP server; both Claude Code and Cowork integrations verified end-to-end. The HTTP/HTTPS transport was removed 2026-07-09 (no consumers — stdio only).
 - Full spec at `docs/specs/local-rag.md` — read this before any slice.
-- Open work is tracked in `TODO.md`. Active front: retrieval ranking quality (eval harness → chunk-size caps → score transparency).
+- The 2026-07-09 ranking-quality push shipped: golden-query eval harness (`local-rag eval`, supports negative queries), ~1,200-char markdown chunk cap, real scores (`cosine`/`bm25`), cosine-plus-lexical-boost ranking, and fixes for LanceDB FTS delta bugs (`Store.optimize`, `_fts_top`). Remaining `TODO.md` items are wait-for-evidence.
 - **Never commit personal vault paths or note names** — golden-query eval data lives in gitignored `*.local.toml` files.
 
 ## Repository / publishing

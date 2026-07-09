@@ -127,7 +127,7 @@ feature with attached knowledge files. Trade-offs vs local-rag:
 |-------------------------------|-----------------------|------------------------|
 | Privacy                       | Stays on your machine | Uploaded to Anthropic  |
 | Document count                | Tens of thousands     | ~30 attached files     |
-| Semantic + keyword search     | Yes (hybrid RRF)      | Limited                |
+| Semantic + keyword search     | Yes (cosine + BM25)   | Limited                |
 | Cross-repo / vault            | Yes                   | One project at a time  |
 | Incremental updates           | SHA-256 skip          | Re-upload manually     |
 
