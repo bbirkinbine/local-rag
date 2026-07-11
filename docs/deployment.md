@@ -138,6 +138,40 @@ deferred"). Not implemented in v1.
 
 ---
 
+## Model memory and keep-alive
+
+local-rag never tells Ollama how long to keep `bge-m3` in memory, so
+Ollama's own `keep_alive` policy decides — **5 minutes** by default.
+This interacts with your indexing schedule: with the 30-minute examples
+above, each run loads the model, the model unloads 5 minutes later, and
+the next run cold-loads it again — roughly 48 load/unload cycles a day.
+The same applies to search: an MCP query more than 5 minutes after the
+last embed pays the cold-load latency.
+
+Whether that matters is a trade-off only you can make:
+
+- **Leave the default (model unloads on idle).** Reasonable if RAM is
+  tight or the same Ollama serves large chat models you want evicted
+  promptly. The cost is small — `bge-m3` is ~665 MB at F16 and
+  cold-loads from SSD in a few seconds.
+- **Keep the model resident.** Set `OLLAMA_KEEP_ALIVE` to something
+  above your indexing interval (e.g. `45m` for a 30-minute schedule,
+  or `-1` for never unload). Each scheduled run then re-arms the timer,
+  so the model stays warm and interactive search never cold-starts.
+  For the macOS Ollama app:
+
+  ```bash
+  launchctl setenv OLLAMA_KEEP_ALIVE 45m
+  # then quit and reopen Ollama.app
+  ```
+
+  For a manually run server, `OLLAMA_KEEP_ALIVE=45m ollama serve`.
+
+Note `OLLAMA_KEEP_ALIVE` is server-wide — it affects every model that
+Ollama serves, not just `bge-m3`.
+
+---
+
 ## What about the server?
 
 Nothing to schedule. The MCP server runs over stdio and is spawned and
