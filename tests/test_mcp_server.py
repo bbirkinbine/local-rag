@@ -14,7 +14,7 @@ import pytest
 
 from local_rag.config import Source
 from local_rag.indexer import Indexer
-from local_rag.mcp_server import build_tools
+from local_rag.mcp_server import build_tools, make_server
 from local_rag.store import Store
 
 DIM = 4
@@ -243,3 +243,44 @@ def test_search_context_chunks_defaults_to_no_expansion(store: Store, tmp_path: 
     assert hits
     assert "needle content" in hits[0]["text"]
     assert "first section" not in hits[0]["text"]
+
+
+# ------------------------------------------------------- parameter defaults ---
+
+
+def test_search_callable_with_query_only(store: Store, tmp_path: Path) -> None:
+    """`sources` and `k` default (all configured sources, k=10) so an MCP
+    caller can search with just a query."""
+    _seed(store, tmp_path, "vault", {"a.md": "# A\n\nbody\n"})
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+
+    hits = tools.search("body")
+
+    assert hits
+    assert all(h["source_name"] == "vault" for h in hits)
+
+
+async def test_search_schema_marks_sources_and_k_optional(store: Store) -> None:
+    """The generated MCP schema must not force callers to guess `sources`/`k`:
+    both carry defaults and only `query` is required."""
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+    server = make_server(tools)
+
+    (search_tool,) = [t for t in await server.list_tools() if t.name == "search"]
+    schema = search_tool.inputSchema
+
+    assert schema["required"] == ["query"]
+    assert schema["properties"]["k"]["default"] == 10
+
+
+async def test_search_description_documents_sources_and_k(store: Store) -> None:
+    """The tool description must tell the calling model what omitting
+    `sources` means — a caller that guesses `sources=[]` silently gets []."""
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+    server = make_server(tools)
+
+    (search_tool,) = [t for t in await server.list_tools() if t.name == "search"]
+
+    assert search_tool.description is not None
+    assert "`sources`" in search_tool.description
+    assert "`k`" in search_tool.description

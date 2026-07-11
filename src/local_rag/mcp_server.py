@@ -26,6 +26,7 @@ from local_rag.store import Store
 log = structlog.get_logger()
 
 _K_MIN = 1
+_K_DEFAULT = 10
 _K_MAX = 100
 _CONTEXT_CHUNKS_MAX = 5
 
@@ -62,11 +63,24 @@ class IndexStatus(TypedDict):
     sources: list[SourceInfo]
 
 
+class _SearchTool(Protocol):
+    """Call signature of the search tool, defaults included (so the FastMCP
+    schema marks everything but ``query`` optional)."""
+
+    def __call__(
+        self,
+        query: str,
+        sources: list[str] | None = None,
+        k: int = _K_DEFAULT,
+        context_chunks: int = 0,
+    ) -> list[SearchResult]: ...
+
+
 @dataclass(frozen=True)
 class Tools:
     """The three callables FastMCP wires up. Plain functions for testability."""
 
-    search: Callable[[str, list[str] | None, int, int], list[SearchResult]]
+    search: _SearchTool
     list_sources: Callable[[], list[SourceInfo]]
     index_status: Callable[[], IndexStatus]
 
@@ -80,8 +94,8 @@ def build_tools(
 
     def search(
         query: str,
-        sources: list[str] | None,
-        k: int,
+        sources: list[str] | None = None,
+        k: int = _K_DEFAULT,
         context_chunks: int = 0,
     ) -> list[SearchResult]:
         """Hybrid semantic + keyword search over the user's indexed sources.
@@ -91,6 +105,10 @@ def build_tools(
         outside the current workspace — the Obsidian vault from a coding
         session, or indexed repos from a notes session. For exact-string
         lookup inside files you can already read, built-in grep is better.
+
+        Omit `sources` to search every configured source; pass a list of
+        source names (see `list_sources`) to narrow it. An empty list matches
+        nothing. `k` (default 10, max 100) is the number of hits returned.
 
         Scoring: results are ordered by `score` — raw cosine similarity plus
         a small bounded keyword boost, so exact-term lookups (identifiers,
