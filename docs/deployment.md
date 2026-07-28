@@ -244,6 +244,12 @@ For cron, prefix the command with `ulimit -Sn 65536;`. Confirm what a
 running job actually got with
 `launchctl print gui/$(id -u)/com.<you>.local-rag-index | grep -A3 'resource limits'`.
 
+**The database directory keeps growing** — LanceDB retains superseded table
+versions, and every indexing run creates one. `optimize()` prunes versions
+older than two days automatically (`_VERSION_RETENTION` in `store.py`), so
+size plateaus at roughly two days of churn. A store that predates that
+behaviour reclaims the backlog on its next few runs.
+
 **Every scheduled run logs "embedder unreachable"** — Ollama isn't
 running, or doesn't have `bge-m3` pulled. `ollama list` and
 `curl http://localhost:11434/api/tags` are the usual diagnostics.

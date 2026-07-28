@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from pathlib import Path
 
 import pytest
@@ -675,3 +676,56 @@ def test_search_hybrid_score_is_cosine_plus_bounded_boost(store: Store) -> None:
     assert lex.score < lex.cosine + 0.2  # boost is bounded
     assert sem.bm25 is None
     assert sem.score == pytest.approx(sem.cosine)
+
+
+# ------------------------------------------------------- version retention ---
+# LanceDB keeps every table version until something prunes them. The indexer
+# calls optimize() every 30 minutes, so unpruned versions accumulate without
+# bound (809 versions / 7 GB of fragments on a ~37k-chunk store, 2026-07-27)
+# and the file sprawl exhausts the process FD limit during index merge.
+
+
+def _versions(store: Store, source_name: str) -> int:
+    """Version-history depth for a table, read straight off the LanceDB handle."""
+    tbl: object = store._db.open_table(source_name)
+    # `type: ignore`: lancedb ships no type stubs / py.typed marker.
+    return len(tbl.list_versions())  # type: ignore[attr-defined]
+
+
+def test_optimize_prunes_old_versions(store: Store) -> None:
+    """With a zero retention window, optimize must leave the version history
+    bounded rather than growing once per call."""
+    store.ensure_table("vault")
+    for i in range(6):
+        store.upsert_chunks("vault", [_chunk(path=f"/doc{i}.md", idx=0, text=f"body {i}")])
+        store.optimize("vault", retain_versions_for=timedelta(0))
+
+    assert _versions(store, "vault") <= 3
+
+
+def test_optimize_retains_recent_versions_by_default(store: Store) -> None:
+    """The default retention window must NOT prune versions written seconds
+    ago — recovery/time-travel stays possible within the window."""
+    store.ensure_table("vault")
+    store.upsert_chunks("vault", [_chunk(path="/a.md", idx=0)])
+    store.optimize("vault")
+    before = _versions(store, "vault")
+
+    store.upsert_chunks("vault", [_chunk(path="/b.md", idx=0)])
+    store.optimize("vault")
+
+    assert _versions(store, "vault") >= before
+
+
+def test_optimize_prunes_without_dropping_rows(store: Store) -> None:
+    """Pruning version history must not touch live data."""
+    store.ensure_table("vault")
+    for i in range(4):
+        store.upsert_chunks("vault", [_chunk(path=f"/doc{i}.md", idx=0, text=f"body {i}")])
+        store.optimize("vault", retain_versions_for=timedelta(0))
+
+    assert store.chunk_counts()["vault"] == 4
+    hits = store.search_hybrid(
+        ["vault"], query_text="body", query_vector=[1.0] + [0.0] * (DIM - 1), k=10
+    )
+    assert len(hits) == 4

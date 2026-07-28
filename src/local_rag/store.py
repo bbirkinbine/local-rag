@@ -9,6 +9,7 @@ so hybrid search works without a separate setup step.
 from __future__ import annotations
 
 import math
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,14 @@ _FTS_SCAN_LIMIT = 1_000_000
 # lexical hits score ~5-22).
 _BM25_BLEND_WEIGHT = 0.15
 _BM25_BLEND_PIVOT = 10.0
+
+# How long a superseded table version survives before optimize() prunes it.
+# LanceDB retains every version indefinitely otherwise, and the indexer calls
+# optimize() every 30 minutes — 809 versions / 7 GB of fragments had built up
+# on a ~37k-chunk store by 2026-07-27, and the file sprawl exhausted the
+# indexing process's FD limit mid-merge. Two days is ample recovery headroom
+# for a fully derived store: anything pruned is rebuildable with `index --force`.
+_VERSION_RETENTION = timedelta(days=2)
 
 
 def _bm25_boost(bm25: float | None) -> float:
@@ -93,8 +102,10 @@ class Store:
         # Native LanceDB FTS — auto-updates on subsequent upserts.
         tbl.create_fts_index("text", use_tantivy=False, replace=True)
 
-    def optimize(self, source_name: str) -> None:
-        """Merge table/index deltas so FTS results are complete and ordered.
+    def optimize(
+        self, source_name: str, *, retain_versions_for: timedelta = _VERSION_RETENTION
+    ) -> None:
+        """Merge table/index deltas, then prune superseded versions.
 
         LanceDB 0.30's native FTS misbehaves against unmerged ``merge_insert``
         deltas: ``limit(n)`` returns an arbitrary unsorted sample instead of
@@ -103,8 +114,17 @@ class Store:
         (all verified 2026-07-09). ``optimize()`` merges the deltas and
         restores exact, ordered results. Costs seconds on a ~30k-row table —
         call once per indexing run, not per upsert or per query.
+
+        Merging supersedes the previous version but does not delete it, so the
+        same call prunes versions older than ``retain_versions_for`` (see
+        ``_VERSION_RETENTION``). Live rows are never touched — only history.
+
+        Args:
+            source_name: Table to optimize.
+            retain_versions_for: Age below which superseded versions survive.
+                Pass ``timedelta(0)`` to prune every reclaimable version.
         """
-        self._db.open_table(source_name).optimize()
+        self._db.open_table(source_name).optimize(cleanup_older_than=retain_versions_for)
 
     def list_sources(self) -> list[str]:
         """Return the names of all tables in the DB, sorted alphabetically."""
