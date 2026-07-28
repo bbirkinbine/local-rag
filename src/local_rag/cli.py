@@ -27,6 +27,7 @@ from local_rag.indexer import Indexer, IndexResult
 from local_rag.mcp_server import run_stdio
 from local_rag.models import SearchHit
 from local_rag.paths import default_config_path
+from local_rag.rlimit import raise_open_file_limit
 from local_rag.store import Store
 
 log = structlog.get_logger()
@@ -81,6 +82,10 @@ def _cmd_list(store: Store) -> int:
 
 
 def _cmd_index(config: Config, store: Store, requested: list[str], *, force: bool = False) -> int:
+    # Merging FTS deltas opens every index partition file at once; schedulers
+    # hand out a 256 soft limit, well under what a mid-size table needs.
+    raise_open_file_limit()
+
     by_name = {s.name: s for s in config.sources}
     if requested:
         unknown = [n for n in requested if n not in by_name]

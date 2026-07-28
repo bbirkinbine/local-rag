@@ -442,3 +442,19 @@ def test_search_output_includes_cosine(
     assert rc == 0
     out = capsys.readouterr().out
     assert "cos=" in out
+
+
+def test_index_raises_open_file_limit(
+    tmp_path: Path, patch_embedder: FakeEmbedder, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Indexing merges FTS deltas, which opens hundreds of partition files;
+    the run must lift the scheduler-inherited soft limit before starting."""
+    calls: list[bool] = []
+    monkeypatch.setattr(cli, "raise_open_file_limit", lambda: calls.append(True) or 0)
+    vault = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n\nbody\n"})
+    cfg = _write_config(tmp_path, [("vault", vault, "markdown")])
+
+    rc = cli.main(["--config", str(cfg), "index"])
+
+    assert rc == 0
+    assert calls == [True]

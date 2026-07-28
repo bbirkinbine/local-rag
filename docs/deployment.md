@@ -220,6 +220,30 @@ there unless `LOCAL_RAG_CONFIG` is set), then run
 `uv run local-rag list` and compare counts before/after a manual
 `uv run local-rag index`.
 
+**`Too many open files (os error 24)` in the log** — usually paired with
+`Cannot open index on column 'text' ... Skipping index merge`. Merging FTS
+deltas opens every index partition file at once (~290 for a 37k-chunk table,
+growing with corpus size and indexing history), while launchd and cron hand
+their jobs a 256 soft limit. `local-rag index` raises its own soft limit at
+startup, so this should not appear — note it is a *silent quality* failure,
+not a crash: the run still exits 0, but BM25 stays blind to the newest chunks
+until a later merge succeeds.
+
+If you do see it, the process was refused the raise (an unusually low
+`kern.maxfilesperproc`, or a container FD cap). Grant the limit in the
+scheduler instead — for launchd, add to the plist:
+
+```xml
+<key>SoftResourceLimits</key>
+<dict>
+    <key>NumberOfFiles</key><integer>65536</integer>
+</dict>
+```
+
+For cron, prefix the command with `ulimit -Sn 65536;`. Confirm what a
+running job actually got with
+`launchctl print gui/$(id -u)/com.<you>.local-rag-index | grep -A3 'resource limits'`.
+
 **Every scheduled run logs "embedder unreachable"** — Ollama isn't
 running, or doesn't have `bge-m3` pulled. `ollama list` and
 `curl http://localhost:11434/api/tags` are the usual diagnostics.
