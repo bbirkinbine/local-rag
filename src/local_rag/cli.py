@@ -53,7 +53,11 @@ def main(argv: list[str] | None = None) -> int:
         _err(f"config error: {e}")
         return 2
 
-    store = Store(config.db_path, vector_dim=config.embedding.dim)
+    store = Store(
+        config.db_path,
+        vector_dim=config.embedding.dim,
+        keep_runs=config.store.keep_runs,
+    )
 
     if args.cmd == "list":
         return _cmd_list(store)

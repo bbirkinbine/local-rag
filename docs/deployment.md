@@ -245,10 +245,19 @@ running job actually got with
 `launchctl print gui/$(id -u)/com.<you>.local-rag-index | grep -A3 'resource limits'`.
 
 **The database directory keeps growing** — LanceDB retains superseded table
-versions, and every indexing run creates one. `optimize()` prunes versions
-older than two days automatically (`_VERSION_RETENTION` in `store.py`), so
-size plateaus at roughly two days of churn. A store that predates that
-behaviour reclaims the backlog on its next few runs.
+versions, and every indexing run creates one. Indexing keeps the last 24 runs
+and prunes the rest, so size plateaus once that many runs are on record. A
+store that predates that behaviour reclaims the backlog over its next few
+runs.
+
+Tune it with `keep_runs` under `[store]` in the config (see
+[configuration](configuration.md)) — lower it if disk matters more than
+recovery, raise it for more room to undo a bad index run. It counts runs, not
+hours, so it means the same thing whichever schedule you picked above and
+needs no adjustment if you change it.
+
+Pruned copies are not backups: the store is fully derived, so
+`local-rag index --force` rebuilds it from the sources.
 
 **Every scheduled run logs "embedder unreachable"** — Ollama isn't
 running, or doesn't have `bge-m3` pulled. `ollama list` and

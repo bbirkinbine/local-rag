@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from local_rag.config import Config, ConfigError
+from local_rag.store import DEFAULT_KEEP_RUNS
 
 
 def _write(path: Path, content: str) -> Path:
@@ -455,3 +456,94 @@ ignore = ["build/", "dist/"]
     assert [s.name for s in config.sources] == ["first", "second"]
     assert config.sources[1].respect_gitignore is True
     assert config.sources[1].ignore == ["build/", "dist/"]
+
+
+# ------------------------------------------------------------ [store] block ---
+# Retention is bounded in runs, not hours: old copies are produced per
+# indexing run, so a run count means the same thing at every cadence.
+
+
+def test_store_block_absent_uses_the_default_keep_runs(tmp_path: Path, vault_dir: Path) -> None:
+    """The block is optional — omitting it must not be an error."""
+    cfg_path = _write(tmp_path / "config.toml", _minimal_toml(tmp_path, vault_dir))
+
+    config = Config.load(cfg_path)
+
+    assert config.store.keep_runs == DEFAULT_KEEP_RUNS
+
+
+def test_store_keep_runs_is_parsed(tmp_path: Path, vault_dir: Path) -> None:
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        _minimal_toml(tmp_path, vault_dir) + "\n[store]\nkeep_runs = 40\n",
+    )
+
+    config = Config.load(cfg_path)
+
+    assert config.store.keep_runs == 40
+
+
+def test_store_keep_runs_zero_is_allowed(tmp_path: Path, vault_dir: Path) -> None:
+    """Zero means keep nothing reclaimable — a valid choice, not an error."""
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        _minimal_toml(tmp_path, vault_dir) + "\n[store]\nkeep_runs = 0\n",
+    )
+
+    config = Config.load(cfg_path)
+
+    assert config.store.keep_runs == 0
+
+
+def test_store_keep_runs_rejects_negative(tmp_path: Path, vault_dir: Path) -> None:
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        _minimal_toml(tmp_path, vault_dir) + "\n[store]\nkeep_runs = -1\n",
+    )
+
+    with pytest.raises(ConfigError, match="keep_runs"):
+        Config.load(cfg_path)
+
+
+def test_store_keep_runs_rejects_bool(tmp_path: Path, vault_dir: Path) -> None:
+    """`True` is an int in Python; it must not slip through as 1 run."""
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        _minimal_toml(tmp_path, vault_dir) + "\n[store]\nkeep_runs = true\n",
+    )
+
+    with pytest.raises(ConfigError, match="keep_runs"):
+        Config.load(cfg_path)
+
+
+def test_store_keep_runs_rejects_fractional(tmp_path: Path, vault_dir: Path) -> None:
+    """Runs are discrete; half a run is a typo, not a policy."""
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        _minimal_toml(tmp_path, vault_dir) + "\n[store]\nkeep_runs = 2.5\n",
+    )
+
+    with pytest.raises(ConfigError, match="keep_runs"):
+        Config.load(cfg_path)
+
+
+def test_store_keep_runs_rejects_string(tmp_path: Path, vault_dir: Path) -> None:
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        _minimal_toml(tmp_path, vault_dir) + '\n[store]\nkeep_runs = "24"\n',
+    )
+
+    with pytest.raises(ConfigError, match="keep_runs"):
+        Config.load(cfg_path)
+
+
+def test_store_block_must_be_a_table(tmp_path: Path, vault_dir: Path) -> None:
+    # Prepended, not appended: a bare key after `[[sources]]` would belong to
+    # that table rather than the document root.
+    cfg_path = _write(
+        tmp_path / "config.toml",
+        'store = "nope"\n' + _minimal_toml(tmp_path, vault_dir),
+    )
+
+    with pytest.raises(ConfigError, match="store"):
+        Config.load(cfg_path)

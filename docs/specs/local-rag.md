@@ -80,6 +80,11 @@ respect_gitignore = true
 # path = "~/Downloads/src/homelab"
 # type = "code"
 # respect_gitignore = true
+
+# Optional; omit for defaults. How many past indexing runs stay recoverable
+# before indexing prunes the older copies.
+[store]
+keep_runs = 24
 ```
 
 ## CLI surface

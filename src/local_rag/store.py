@@ -8,15 +8,19 @@ so hybrid search works without a separate setup step.
 
 from __future__ import annotations
 
+import json
 import math
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 import lancedb
 import pyarrow as pa
+import structlog
 
 from local_rag.models import Chunk, SearchHit
+
+log = structlog.get_logger()
 
 # Reciprocal Rank Fusion constant. 60 is the BM25/RRF folklore default.
 _RRF_K = 60
@@ -35,13 +39,65 @@ _FTS_SCAN_LIMIT = 1_000_000
 _BM25_BLEND_WEIGHT = 0.15
 _BM25_BLEND_PIVOT = 10.0
 
-# How long a superseded table version survives before optimize() prunes it.
-# LanceDB retains every version indefinitely otherwise, and the indexer calls
-# optimize() every 30 minutes — 809 versions / 7 GB of fragments had built up
-# on a ~37k-chunk store by 2026-07-27, and the file sprawl exhausted the
-# indexing process's FD limit mid-merge. Two days is ample recovery headroom
-# for a fully derived store: anything pruned is rebuildable with `index --force`.
-_VERSION_RETENTION = timedelta(days=2)
+# How many past indexing runs stay recoverable. LanceDB retains every table
+# version indefinitely otherwise — 809 versions / 7 GB of fragments had built
+# up on a ~37k-chunk store by 2026-07-27, and the file sprawl exhausted the
+# indexing process's FD limit mid-merge.
+#
+# Bounded in runs rather than elapsed time because old copies are produced per
+# run and nothing is produced between runs: both the disk cost and the undo
+# depth are functions of run count, and neither is a function of the clock. A
+# time window would mean different things on different schedules — 24 runs of
+# undo at a 30-minute cadence, none at all on a nightly one.
+#
+# 24 matches what a 12-hour window bought on the documented 30-minute
+# schedule: ~1.3 GB on a 37k-chunk vault. Recovery is all it buys — the store
+# is fully derived, and anything pruned is rebuildable with `index --force`.
+DEFAULT_KEEP_RUNS = 24
+
+# Filename of the run log, kept beside the LanceDB tables. Run boundaries
+# can't be recovered from version timestamps: one run emits several versions
+# (~6.6 on a 37k-chunk table), and a slow run can outlast the gap between
+# fast ones, so no timestamp-gap threshold separates them reliably.
+_RUN_LOG_NAME = ".run_log.json"
+
+# Age passed to LanceDB when every version must survive. It only accepts a
+# window, so "keep everything" is spelled as a window nothing can exceed.
+_KEEP_EVERYTHING = timedelta(days=36_500)
+
+
+def _utc_now() -> datetime:
+    """Current UTC time. Wrapped so tests can pin it."""
+    return datetime.now(UTC)
+
+
+def _cutoff_age(history: list[str], keep_runs: int) -> timedelta:
+    """Translate "keep the last N runs" into the age LanceDB wants.
+
+    Args:
+        history: Run-completion timestamps, oldest first, ISO-8601.
+        keep_runs: Runs that must stay recoverable.
+
+    Returns:
+        Age beyond which versions may be pruned. ``_KEEP_EVERYTHING`` when
+        the history is too short to know where run N-ago ended, so a missing
+        or truncated log can never license a prune.
+    """
+    if keep_runs <= 0:
+        return timedelta(0)
+    if len(history) < keep_runs:
+        return _KEEP_EVERYTHING
+
+    boundary = history[-keep_runs]
+    try:
+        started = datetime.fromisoformat(boundary)
+    except ValueError:
+        log.warning("store.run_log_bad_timestamp", value=boundary)
+        return _KEEP_EVERYTHING
+
+    # Clamped at zero: a clock that jumped backwards must not become a
+    # negative age, which LanceDB would read as "prune the future".
+    return max(_utc_now() - started, timedelta(0))
 
 
 def _bm25_boost(bm25: float | None) -> float:
@@ -64,12 +120,37 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 class Store:
     """LanceDB chunk store. One table per source, hybrid search via RRF."""
 
-    def __init__(self, db_path: Path, vector_dim: int) -> None:
-        """Open (or create) a LanceDB at ``db_path``. All tables share ``vector_dim``."""
+    def __init__(
+        self,
+        db_path: Path,
+        vector_dim: int,
+        *,
+        keep_runs: int = DEFAULT_KEEP_RUNS,
+    ) -> None:
+        """Open (or create) a LanceDB at ``db_path``.
+
+        Args:
+            db_path: Directory holding the LanceDB tables; created if absent.
+            vector_dim: Embedding width. All tables share it.
+            keep_runs: How many past indexing runs stay recoverable after
+                :meth:`optimize` prunes.
+        """
         db_path.mkdir(parents=True, exist_ok=True)
         # `Any`: lancedb has no published type stubs / py.typed marker.
         self._db: Any = lancedb.connect(str(db_path))
         self._vector_dim = vector_dim
+        self._keep_runs = keep_runs
+        self._run_log_path = db_path / _RUN_LOG_NAME
+
+    @property
+    def keep_runs(self) -> int:
+        """How many past indexing runs survive :meth:`optimize`."""
+        return self._keep_runs
+
+    @property
+    def run_log_path(self) -> Path:
+        """Where run boundaries are recorded, beside the LanceDB tables."""
+        return self._run_log_path
 
     # -------------------------------------------------------------- schema
 
@@ -102,10 +183,8 @@ class Store:
         # Native LanceDB FTS — auto-updates on subsequent upserts.
         tbl.create_fts_index("text", use_tantivy=False, replace=True)
 
-    def optimize(
-        self, source_name: str, *, retain_versions_for: timedelta = _VERSION_RETENTION
-    ) -> None:
-        """Merge table/index deltas, then prune superseded versions.
+    def optimize(self, source_name: str, *, keep_runs: int | None = None) -> None:
+        """Merge table/index deltas, then prune all but the last N runs.
 
         LanceDB 0.30's native FTS misbehaves against unmerged ``merge_insert``
         deltas: ``limit(n)`` returns an arbitrary unsorted sample instead of
@@ -116,15 +195,58 @@ class Store:
         call once per indexing run, not per upsert or per query.
 
         Merging supersedes the previous version but does not delete it, so the
-        same call prunes versions older than ``retain_versions_for`` (see
-        ``_VERSION_RETENTION``). Live rows are never touched — only history.
+        same call prunes history back to the start of the run ``keep_runs``
+        ago. Live rows are never touched — only history. This call *is* the
+        run boundary: it records one entry in the run log.
+
+        LanceDB only accepts an age, so the run count is translated into one
+        here. With fewer runs on record than requested, nothing is pruned —
+        the fail-safe direction when the log is short, missing, or damaged.
 
         Args:
             source_name: Table to optimize.
-            retain_versions_for: Age below which superseded versions survive.
-                Pass ``timedelta(0)`` to prune every reclaimable version.
+            keep_runs: Runs to keep recoverable. Defaults to this store's
+                ``keep_runs``. Pass ``0`` to keep only what LanceDB cannot
+                reclaim.
         """
-        self._db.open_table(source_name).optimize(cleanup_older_than=retain_versions_for)
+        wanted = self._keep_runs if keep_runs is None else keep_runs
+        log = self._read_run_log()
+        history = log.get(source_name, [])
+
+        self._db.open_table(source_name).optimize(cleanup_older_than=_cutoff_age(history, wanted))
+
+        # Record after pruning: the entry describes a run that is now complete.
+        history.append(_utc_now().isoformat())
+        # One spare beyond the window so the oldest kept run has a boundary.
+        log[source_name] = history[-(wanted + 1) :] if wanted >= 0 else history
+        self._write_run_log(log)
+
+    def _read_run_log(self) -> dict[str, list[str]]:
+        """Return the run log, or an empty log if it is absent or unreadable.
+
+        A damaged log must never abort indexing or, worse, license a prune:
+        callers treat "no history" as "keep everything".
+        """
+        try:
+            raw = json.loads(self._run_log_path.read_text())
+        except FileNotFoundError:
+            return {}
+        except (OSError, json.JSONDecodeError) as e:
+            log.warning("store.run_log_unreadable", path=str(self._run_log_path), error=str(e))
+            return {}
+        if not isinstance(raw, dict):
+            log.warning("store.run_log_malformed", path=str(self._run_log_path))
+            return {}
+        return {k: list(v) for k, v in raw.items() if isinstance(v, list)}
+
+    def _write_run_log(self, log_data: dict[str, list[str]]) -> None:
+        """Replace the run log atomically; a write failure is not fatal."""
+        tmp = self._run_log_path.with_suffix(".tmp")
+        try:
+            tmp.write_text(json.dumps(log_data, indent=2))
+            tmp.replace(self._run_log_path)
+        except OSError as e:
+            log.warning("store.run_log_unwritable", path=str(self._run_log_path), error=str(e))
 
     def list_sources(self) -> list[str]:
         """Return the names of all tables in the DB, sorted alphabetically."""

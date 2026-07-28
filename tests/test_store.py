@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+import json
 from pathlib import Path
 
 import pytest
 
 from local_rag.models import Chunk, SearchHit
-from local_rag.store import Store
+from local_rag.store import DEFAULT_KEEP_RUNS, Store
 
 DIM = 8
 
@@ -678,11 +678,15 @@ def test_search_hybrid_score_is_cosine_plus_bounded_boost(store: Store) -> None:
     assert sem.score == pytest.approx(sem.cosine)
 
 
-# ------------------------------------------------------- version retention ---
+# --------------------------------------------------------- version retention ---
 # LanceDB keeps every table version until something prunes them. The indexer
-# calls optimize() every 30 minutes, so unpruned versions accumulate without
+# calls optimize() after every run, so unpruned versions accumulate without
 # bound (809 versions / 7 GB of fragments on a ~37k-chunk store, 2026-07-27)
 # and the file sprawl exhausts the process FD limit during index merge.
+#
+# Retention is bounded in *runs*, not hours: copies are produced per run and
+# nothing is produced between runs, so both the disk cost and the undo depth
+# are functions of run count at any indexing cadence.
 
 
 def _versions(store: Store, source_name: str) -> int:
@@ -692,40 +696,151 @@ def _versions(store: Store, source_name: str) -> int:
     return len(tbl.list_versions())  # type: ignore[attr-defined]
 
 
-def test_optimize_prunes_old_versions(store: Store) -> None:
-    """With a zero retention window, optimize must leave the version history
-    bounded rather than growing once per call."""
+def _run(store: Store, source: str, n: int) -> None:
+    """One indexing run's worth of work: upsert a doc, then optimize."""
+    store.upsert_chunks(source, [_chunk(path=f"/doc{n}.md", idx=0, text=f"body {n}")])
+    store.optimize(source)
+
+
+def test_shipped_default_keeps_a_useful_number_of_runs() -> None:
+    """The default must buy real undo depth without being unbounded."""
+    assert 1 < DEFAULT_KEEP_RUNS <= 100
+
+
+def test_store_without_keep_runs_uses_the_shipped_default(tmp_path: Path) -> None:
+    """Constructing a Store without a bound must not silently disable pruning."""
+    assert Store(tmp_path / "db", vector_dim=DIM).keep_runs == DEFAULT_KEEP_RUNS
+
+
+def test_history_is_bounded_once_past_the_keep_window(tmp_path: Path) -> None:
+    """Beyond keep_runs, history stops growing — this is the disk cap.
+
+    Sampled after the window has had several runs to fill; the first few
+    runs legitimately grow, because there is not yet a run N-ago to prune to.
+    """
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=3)
+    store.ensure_table("vault")
+    for i in range(8):
+        _run(store, "vault", i)
+    settled = _versions(store, "vault")
+
+    for i in range(8, 24):
+        _run(store, "vault", i)
+
+    assert _versions(store, "vault") <= settled
+
+
+def test_recent_runs_survive_pruning(tmp_path: Path) -> None:
+    """The whole point of the bound: you can still go back a run or two."""
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=3)
+    store.ensure_table("vault")
+    for i in range(8):
+        _run(store, "vault", i)
+
+    tbl = store._db.open_table("vault")
+    # `type: ignore`: lancedb ships no type stubs / py.typed marker.
+    row_counts = set()
+    for v in tbl.list_versions():  # type: ignore[attr-defined]
+        tbl.checkout(v["version"])  # type: ignore[attr-defined]
+        row_counts.add(tbl.count_rows())
+    tbl.checkout_latest()  # type: ignore[attr-defined]
+
+    # More than one distinct data state survives => real undo depth.
+    assert len(row_counts) > 1
+
+
+def test_keep_runs_zero_prunes_everything_reclaimable(tmp_path: Path) -> None:
+    """Zero is a valid choice: keep only what LanceDB cannot reclaim."""
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=0)
     store.ensure_table("vault")
     for i in range(6):
-        store.upsert_chunks("vault", [_chunk(path=f"/doc{i}.md", idx=0, text=f"body {i}")])
-        store.optimize("vault", retain_versions_for=timedelta(0))
+        _run(store, "vault", i)
 
     assert _versions(store, "vault") <= 3
 
 
-def test_optimize_retains_recent_versions_by_default(store: Store) -> None:
-    """The default retention window must NOT prune versions written seconds
-    ago — recovery/time-travel stays possible within the window."""
-    store.ensure_table("vault")
-    store.upsert_chunks("vault", [_chunk(path="/a.md", idx=0)])
-    store.optimize("vault")
-    before = _versions(store, "vault")
-
-    store.upsert_chunks("vault", [_chunk(path="/b.md", idx=0)])
-    store.optimize("vault")
-
-    assert _versions(store, "vault") >= before
-
-
-def test_optimize_prunes_without_dropping_rows(store: Store) -> None:
+def test_pruning_never_drops_live_rows(tmp_path: Path) -> None:
     """Pruning version history must not touch live data."""
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=0)
     store.ensure_table("vault")
     for i in range(4):
-        store.upsert_chunks("vault", [_chunk(path=f"/doc{i}.md", idx=0, text=f"body {i}")])
-        store.optimize("vault", retain_versions_for=timedelta(0))
+        _run(store, "vault", i)
 
     assert store.chunk_counts()["vault"] == 4
     hits = store.search_hybrid(
         ["vault"], query_text="body", query_vector=[1.0] + [0.0] * (DIM - 1), k=10
     )
     assert len(hits) == 4
+
+
+def test_nothing_is_pruned_before_keep_runs_is_reached(tmp_path: Path) -> None:
+    """With fewer runs on record than requested, keep everything — the
+    fail-safe direction when history is short or missing."""
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=50)
+    store.ensure_table("vault")
+    for i in range(5):
+        _run(store, "vault", i)
+
+    tbl = store._db.open_table("vault")
+    row_counts = set()
+    for v in tbl.list_versions():  # type: ignore[attr-defined]
+        tbl.checkout(v["version"])  # type: ignore[attr-defined]
+        row_counts.add(tbl.count_rows())
+    tbl.checkout_latest()  # type: ignore[attr-defined]
+
+    # Every intermediate state (1..5 rows) is still reachable.
+    assert {1, 2, 3, 4, 5} <= row_counts
+
+
+# ------------------------------------------------------------------ run log ---
+# Run boundaries cannot be inferred from version timestamps: a run emits
+# several versions, and a slow run on a large table can outlast the gap
+# between fast runs. The store records them instead.
+
+
+def test_run_log_is_written_beside_the_db(tmp_path: Path) -> None:
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=3)
+    store.ensure_table("vault")
+    _run(store, "vault", 0)
+
+    assert store.run_log_path.exists()
+
+
+def test_run_log_is_truncated_to_the_keep_window(tmp_path: Path) -> None:
+    """The log must not become the thing that grows without bound."""
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=3)
+    store.ensure_table("vault")
+    for i in range(20):
+        _run(store, "vault", i)
+
+    entries = json.loads(store.run_log_path.read_text())["vault"]
+
+    assert len(entries) <= 5
+
+
+def test_corrupt_run_log_is_survivable(tmp_path: Path) -> None:
+    """A damaged log must not break indexing, and must not prune blindly."""
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=3)
+    store.ensure_table("vault")
+    _run(store, "vault", 0)
+    store.run_log_path.write_text("{ this is not json")
+
+    _run(store, "vault", 1)  # must not raise
+
+    assert store.chunk_counts()["vault"] == 2
+    assert json.loads(store.run_log_path.read_text())["vault"]
+
+
+def test_run_log_keeps_sources_independent(tmp_path: Path) -> None:
+    """One source indexing often must not evict another's history."""
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=3)
+    store.ensure_table("vault")
+    store.ensure_table("code")
+    for i in range(6):
+        _run(store, "vault", i)
+    _run(store, "code", 0)
+
+    log = json.loads(store.run_log_path.read_text())
+
+    assert set(log) == {"vault", "code"}
+    assert len(log["code"]) == 1
