@@ -3,6 +3,18 @@
 `local-rag` reads its config from `~/.config/local-rag/config.toml`. Override
 the path with `--config <path>` or the `LOCAL_RAG_CONFIG` env var.
 
+There is no config in the repo itself and nothing is indexed until you write
+one. The fastest start is to copy the annotated
+[`config.example.toml`](../config.example.toml) from the repo root:
+
+```bash
+mkdir -p ~/.config/local-rag
+cp config.example.toml ~/.config/local-rag/config.toml
+```
+
+then edit the paths. The example states every optional key explicitly at its
+shipped default, so what you see is exactly what runs.
+
 ## Example
 
 ```toml
@@ -33,7 +45,43 @@ keep_runs = 24
 Every source is opt-in. Third-party clones don't get indexed unless they have
 a matching `[[sources]]` block.
 
-## `[store]`
+## Key reference
+
+### Top level
+
+| Key | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `db_path` | yes | — | Directory for the LanceDB store. Created on first `local-rag index`. `~` expands. |
+
+### `[embedding]`
+
+Required block; all four keys are required. Only Ollama is supported in v1.
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `provider` | — | Embedding backend. Must be `"ollama"`. |
+| `model` | — | Ollama model name, e.g. `"bge-m3"`. Pull it first: `ollama pull bge-m3`. |
+| `url` | — | Ollama HTTP endpoint, normally `"http://localhost:11434"`. |
+| `dim` | — | Embedding vector width. Must match the model — `bge-m3` produces 1024. |
+
+### `[[sources]]`
+
+At least one block is required. Each block indexes one directory tree into
+its own table.
+
+| Key | Required | Default | Meaning |
+| --- | --- | --- | --- |
+| `name` | yes | — | Unique label. Becomes the table name and the `source` value in search results. |
+| `path` | yes | — | Directory to index. Must exist. `~` expands. |
+| `type` | yes | — | `"markdown"` (header-aware chunking) or `"code"` (line-window chunking). |
+| `ignore` | no | `[]` | Glob patterns to skip, relative to `path` (e.g. `".obsidian/**"`). |
+| `respect_gitignore` | no | `false` | Also skip files matched by the repo's `.gitignore`. |
+
+Regardless of settings, only files on the extension allowlist are indexed and
+files over 1 MB are skipped — see the [spec](specs/local-rag.md) for the exact
+lists.
+
+### `[store]`
 
 Optional — omit the whole block to take the defaults.
 
@@ -69,8 +117,8 @@ Run boundaries are recorded in `.run_log.json` beside the database. Deleting
 it is harmless: indexing starts a new record and keeps everything until it
 has `keep_runs` runs to work with again.
 
-## Full key reference
+## Internals
 
-The complete schema — every key, the extension allowlist, the 1 MB per-file
-size cap, the incremental SHA-256 hashing rules — lives in the
+Behavior that isn't configurable — the extension allowlist, the 1 MB per-file
+size cap, the incremental SHA-256 hashing rules — is documented in the
 [spec](specs/local-rag.md).

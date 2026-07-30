@@ -1,0 +1,43 @@
+# local-rag configuration
+#
+# Copy this file to ~/.config/local-rag/config.toml and edit the paths.
+# The CLI also accepts --config <path> or the LOCAL_RAG_CONFIG env var.
+#
+# Keys annotated "default:" are optional — the value shown is exactly what
+# you get if the key is omitted. Every other key is required.
+# Full parameter reference: docs/configuration.md
+
+# Where the LanceDB store lives. Created on first `local-rag index`.
+db_path = "~/.local/share/local-rag/db"
+
+[embedding]
+# All four keys are required. Only Ollama is supported in v1.
+provider = "ollama"
+model = "bge-m3"
+url = "http://localhost:11434"
+# Embedding width — must match the model (bge-m3 produces 1024-dim vectors).
+dim = 1024
+
+# One [[sources]] block per directory to index. Indexing is strictly opt-in:
+# a directory without a block here is invisible to local-rag.
+[[sources]]
+# Unique label; becomes the table name in the store and the `source` filter
+# value in search results.
+name = "vault"
+path = "~/Downloads/obsidian-vault"
+# "markdown" (header-aware chunking) or "code" (line-window chunking).
+type = "markdown"
+# Glob patterns to skip, relative to `path`. default: []
+ignore = [".obsidian/**", ".trash/**"]
+
+[[sources]]
+name = "local-rag"
+path = "~/Downloads/src/local-rag"
+type = "code"
+# Skip files matched by the repo's .gitignore. default: false
+respect_gitignore = true
+
+[store]
+# Past indexing runs kept for undo; 0 keeps only the current index.
+# See docs/configuration.md for the disk-cost trade-off. default: 24
+keep_runs = 24

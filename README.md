@@ -48,6 +48,11 @@ uv sync
 ollama pull bge-m3
 ```
 
+Nothing is indexed until you write a config — copy
+[`config.example.toml`](config.example.toml) to
+`~/.config/local-rag/config.toml` and edit the paths. Every optional key in it
+is spelled out at its shipped default.
+
 ## Next steps
 
 - Configure what gets indexed → [`docs/configuration.md`](docs/configuration.md)
