@@ -53,6 +53,13 @@ def main(argv: list[str] | None = None) -> int:
         _err(f"config error: {e}")
         return 2
 
+    # Every table-touching command needs this, not just `index`. A BM25 query
+    # opens the posting list of every FTS index partition at once and pins
+    # them in LanceDB's index cache — 248 files on a 40k-chunk vault — while
+    # launchd hands GUI-spawned processes (including the MCP server its
+    # clients spawn) a 256-file soft limit.
+    raise_open_file_limit()
+
     store = Store(
         config.db_path,
         vector_dim=config.embedding.dim,
@@ -86,10 +93,6 @@ def _cmd_list(store: Store) -> int:
 
 
 def _cmd_index(config: Config, store: Store, requested: list[str], *, force: bool = False) -> int:
-    # Merging FTS deltas opens every index partition file at once; schedulers
-    # hand out a 256 soft limit, well under what a mid-size table needs.
-    raise_open_file_limit()
-
     by_name = {s.name: s for s in config.sources}
     if requested:
         unknown = [n for n in requested if n not in by_name]
