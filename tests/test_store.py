@@ -717,17 +717,27 @@ def test_history_is_bounded_once_past_the_keep_window(tmp_path: Path) -> None:
 
     Sampled after the window has had several runs to fill; the first few
     runs legitimately grow, because there is not yet a run N-ago to prune to.
+
+    Compared as a max over a window rather than a single reading: a run
+    prunes and *then* writes versions (the upsert and the FTS rebuild), so
+    consecutive samples straddle the boundary and oscillate by one either
+    way. Unbounded growth would clear that band by far.
     """
     store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=3)
     store.ensure_table("vault")
+
+    def peak_over(runs: range) -> int:
+        seen = []
+        for i in runs:
+            _run(store, "vault", i)
+            seen.append(_versions(store, "vault"))
+        return max(seen)
+
     for i in range(8):
         _run(store, "vault", i)
-    settled = _versions(store, "vault")
+    settled = peak_over(range(8, 16))
 
-    for i in range(8, 24):
-        _run(store, "vault", i)
-
-    assert _versions(store, "vault") <= settled
+    assert peak_over(range(16, 40)) <= settled
 
 
 def test_recent_runs_survive_pruning(tmp_path: Path) -> None:
@@ -844,3 +854,63 @@ def test_run_log_keeps_sources_independent(tmp_path: Path) -> None:
 
     assert set(log) == {"vault", "code"}
     assert len(log["code"]) == 1
+
+
+# ------------------------------------------------------------ FTS compaction ---
+# LanceDB's optimize() adds new rows to the FTS index by *appending a
+# partition*, never by compacting existing ones, so partition count grows by
+# one per indexing run and never falls. Every BM25 query opens the posting
+# list of every partition at once and pins them in the index cache: 409
+# partitions on a 40k-chunk vault held 248 file descriptors open, over the
+# 256 soft limit a launchd-spawned MCP server inherits (measured 2026-08-28).
+#
+# Partition count therefore has to be a function of the corpus, not of how
+# many times the corpus has been indexed.
+
+
+def _fts_partitions(store: Store, source_name: str) -> int:
+    """Partitions in the table's *live* FTS index, counted on disk.
+
+    LanceDB exposes no partition count, and the number is the whole point of
+    the compaction: it is what a BM25 query turns into open file descriptors.
+    The live index is the most recently written one; superseded index
+    directories linger until a prune reclaims them.
+    """
+    indices = store.run_log_path.parent / f"{source_name}.lance" / "_indices"
+    live = max(
+        (d for d in indices.iterdir() if d.is_dir() and any(d.iterdir())),
+        key=lambda d: d.stat().st_mtime,
+    )
+    return len(list(live.glob("part_*_invert.lance")))
+
+
+def test_fts_partitions_do_not_grow_with_indexing_runs(tmp_path: Path) -> None:
+    """The bug: repeated runs must not keep adding partitions to the index.
+
+    Each partition costs open file descriptors on every BM25 query, so an
+    unbounded count is an unbounded FD requirement.
+    """
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=3)
+    store.ensure_table("vault")
+    for i in range(3):
+        _run(store, "vault", i)
+    settled = _fts_partitions(store, "vault")
+
+    for i in range(3, 12):
+        _run(store, "vault", i)
+
+    assert _fts_partitions(store, "vault") <= settled
+
+
+def test_fts_compaction_keeps_every_row_searchable(tmp_path: Path) -> None:
+    """Rebuilding the index must not lose rows: it is derived from them."""
+    store = Store(tmp_path / "db", vector_dim=DIM, keep_runs=3)
+    store.ensure_table("vault")
+    for i in range(12):
+        _run(store, "vault", i)
+
+    found = store.search_hybrid(
+        ["vault"], query_text="body 7", query_vector=[1.0] + [0.0] * (DIM - 1), k=20
+    )
+
+    assert any(h.chunk.text == "body 7" for h in found)

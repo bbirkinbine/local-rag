@@ -444,17 +444,28 @@ def test_search_output_includes_cosine(
     assert "cos=" in out
 
 
-def test_index_raises_open_file_limit(
-    tmp_path: Path, patch_embedder: FakeEmbedder, monkeypatch: pytest.MonkeyPatch
+# Every subcommand that touches a table needs the raise, not just `index`.
+# A BM25 query opens the posting list of every FTS index partition at once
+# (248 files on a 40k-chunk vault, 2026-08-28), and the MCP server inherits
+# the 256-file soft limit that launchd hands GUI-spawned processes — so
+# `search` and `mcp` hit the ceiling exactly like `index` does.
+
+
+@pytest.mark.parametrize("argv", [["index"], ["search", "quick"], ["mcp"]])
+def test_table_touching_commands_raise_the_open_file_limit(
+    tmp_path: Path,
+    patch_embedder: FakeEmbedder,
+    monkeypatch: pytest.MonkeyPatch,
+    argv: list[str],
 ) -> None:
-    """Indexing merges FTS deltas, which opens hundreds of partition files;
-    the run must lift the scheduler-inherited soft limit before starting."""
+    """Each must lift the scheduler-inherited soft limit before touching a table."""
     calls: list[bool] = []
     monkeypatch.setattr(cli, "raise_open_file_limit", lambda: calls.append(True) or 0)
+    monkeypatch.setattr(cli, "run_stdio", lambda *a, **k: None)
     vault = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n\nbody\n"})
     cfg = _write_config(tmp_path, [("vault", vault, "markdown")])
 
-    rc = cli.main(["--config", str(cfg), "index"])
+    rc = cli.main(["--config", str(cfg), *argv])
 
     assert rc == 0
     assert calls == [True]

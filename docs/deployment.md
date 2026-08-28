@@ -220,14 +220,18 @@ there unless `LOCAL_RAG_CONFIG` is set), then run
 `uv run local-rag list` and compare counts before/after a manual
 `uv run local-rag index`.
 
-**`Too many open files (os error 24)` in the log** — usually paired with
-`Cannot open index on column 'text' ... Skipping index merge`. Merging FTS
-deltas opens every index partition file at once (~290 for a 37k-chunk table,
-growing with corpus size and indexing history), while launchd and cron hand
-their jobs a 256 soft limit. `local-rag index` raises its own soft limit at
-startup, so this should not appear — note it is a *silent quality* failure,
-not a crash: the run still exits 0, but BM25 stays blind to the newest chunks
-until a later merge succeeds.
+**`Too many open files (os error 24)`** — from a search, or in the indexing
+log paired with `Cannot open index on column 'text' ... Skipping index merge`.
+A BM25 query needs corpus-wide term statistics, so it opens the posting list
+of every FTS index partition at once and holds them in LanceDB's index cache,
+while launchd and cron hand their jobs a 256-file soft limit — including the
+MCP server your editor spawns.
+
+Every `local-rag` command raises its own soft limit at startup, and indexing
+rebuilds the FTS index to a single partition each run, so this should not
+appear. Note the two failure shapes differ: a search fails loudly, but an
+indexing run that cannot merge still exits 0 and leaves BM25 blind to the
+newest chunks until a later run succeeds.
 
 If you do see it, the process was refused the raise (an unusually low
 `kern.maxfilesperproc`, or a container FD cap). Grant the limit in the

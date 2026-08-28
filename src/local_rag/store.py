@@ -184,7 +184,7 @@ class Store:
         tbl.create_fts_index("text", use_tantivy=False, replace=True)
 
     def optimize(self, source_name: str, *, keep_runs: int | None = None) -> None:
-        """Merge table/index deltas, then prune all but the last N runs.
+        """Merge table/index deltas, rebuild the FTS index, prune old runs.
 
         LanceDB 0.30's native FTS misbehaves against unmerged ``merge_insert``
         deltas: ``limit(n)`` returns an arbitrary unsorted sample instead of
@@ -203,6 +203,11 @@ class Store:
         here. With fewer runs on record than requested, nothing is pruned —
         the fail-safe direction when the log is short, missing, or damaged.
 
+        The FTS rebuild afterwards is what keeps partition count bounded; see
+        :meth:`_compact_fts`. It runs last so the live index is always exactly
+        one partition — ``optimize()`` would otherwise append to whatever it
+        found.
+
         Args:
             source_name: Table to optimize.
             keep_runs: Runs to keep recoverable. Defaults to this store's
@@ -213,13 +218,48 @@ class Store:
         log = self._read_run_log()
         history = log.get(source_name, [])
 
-        self._db.open_table(source_name).optimize(cleanup_older_than=_cutoff_age(history, wanted))
+        tbl = self._db.open_table(source_name)
+        tbl.optimize(cleanup_older_than=_cutoff_age(history, wanted))
+        self._compact_fts(tbl, source_name)
 
         # Record after pruning: the entry describes a run that is now complete.
         history.append(_utc_now().isoformat())
         # One spare beyond the window so the oldest kept run has a boundary.
         log[source_name] = history[-(wanted + 1) :] if wanted >= 0 else history
         self._write_run_log(log)
+
+    # `Any`: lancedb table handle; no published type stubs (same as self._db).
+    def _compact_fts(self, tbl: Any, source_name: str) -> None:  # noqa: ANN401
+        """Rebuild the ``text`` FTS index so it is one partition again.
+
+        ``optimize()`` folds new rows into the FTS index by *appending a
+        partition*; it never compacts existing ones. Partition count therefore
+        tracks indexing runs rather than corpus size — a 40k-chunk vault had
+        409 partitions after ~34 days of two-hourly runs, and a 380-row table
+        had 11 (measured 2026-08-28).
+
+        That is a query-time cost, not just disk: BM25 needs corpus-wide term
+        statistics, so every query opens the posting list of every partition
+        at once and pins them in LanceDB's index cache. Those 409 partitions
+        held 248 file descriptors open — past the 256-file soft limit launchd
+        hands the MCP server — and any search failed with ``Too many open
+        files`` regardless of concurrency.
+
+        A full rebuild resets the count to one. It costs 0.62 s on a
+        40k-chunk table and scales linearly with corpus size, against an
+        indexing run dominated by embedding, so it runs every time rather
+        than on a threshold nobody could tune without counting partitions.
+        Cheaper than it sounds: it replaces the index work ``optimize()``
+        just did, and it also shrinks the index (28 MB fragmented -> 11.8 MB)
+        and the query (409 partition lookups -> one).
+
+        Nothing is lost. The index is derived from the ``text`` column of the
+        live rows and is rebuilt from exactly those rows; ``replace=True``
+        swaps it in atomically, so concurrent readers keep serving from the
+        old index until the new one lands.
+        """
+        tbl.create_fts_index("text", use_tantivy=False, replace=True)
+        log.debug("store.fts_compacted", source=source_name)
 
     def _read_run_log(self) -> dict[str, list[str]]:
         """Return the run log, or an empty log if it is absent or unreadable.
