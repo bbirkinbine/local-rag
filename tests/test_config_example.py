@@ -12,6 +12,7 @@ import tomllib
 from pathlib import Path
 
 from local_rag.config import Config
+from local_rag.frontmatter import DEFAULT_FRONTMATTER_FIELDS
 from local_rag.store import DEFAULT_KEEP_RUNS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -65,3 +66,14 @@ def test_doc_example_stays_in_sync_with_example_file() -> None:
     doc_data = tomllib.loads(match.group(1))
     example_data = tomllib.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
     assert doc_data == example_data
+
+
+def test_example_states_frontmatter_defaults_explicitly() -> None:
+    raw = tomllib.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
+    first = raw["sources"][0]
+    stated = (tuple(first["date_fields"]), first["status_field"], first["tags_field"])
+    assert stated == (
+        DEFAULT_FRONTMATTER_FIELDS.date_fields,
+        DEFAULT_FRONTMATTER_FIELDS.status_field,
+        DEFAULT_FRONTMATTER_FIELDS.tags_field,
+    )

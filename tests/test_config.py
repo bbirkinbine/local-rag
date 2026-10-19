@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from local_rag.config import Config, ConfigError
+from local_rag.frontmatter import DEFAULT_FRONTMATTER_FIELDS, FrontmatterFields
 from local_rag.store import DEFAULT_KEEP_RUNS
 
 
@@ -546,4 +547,53 @@ def test_store_block_must_be_a_table(tmp_path: Path, vault_dir: Path) -> None:
     )
 
     with pytest.raises(ConfigError, match="store"):
+        Config.load(cfg_path)
+
+
+# ------------------------------------------------- frontmatter field names ---
+
+
+def test_frontmatter_keys_absent_use_generic_defaults(tmp_path: Path, vault_dir: Path) -> None:
+    cfg_path = _write(tmp_path / "config.toml", _minimal_toml(tmp_path, vault_dir))
+
+    assert Config.load(cfg_path).sources[0].frontmatter == DEFAULT_FRONTMATTER_FIELDS
+
+
+def test_frontmatter_keys_are_parsed(tmp_path: Path, vault_dir: Path) -> None:
+    toml = _minimal_toml(tmp_path, vault_dir) + (
+        'date_fields = ["modified", "created"]\nstatus_field = "state"\ntags_field = "labels"\n'
+    )
+    cfg_path = _write(tmp_path / "config.toml", toml)
+
+    assert Config.load(cfg_path).sources[0].frontmatter == FrontmatterFields(
+        date_fields=("modified", "created"), status_field="state", tags_field="labels"
+    )
+
+
+def test_frontmatter_empty_date_fields_is_allowed(tmp_path: Path, vault_dir: Path) -> None:
+    toml = _minimal_toml(tmp_path, vault_dir) + "date_fields = []\n"
+    cfg_path = _write(tmp_path / "config.toml", toml)
+
+    assert Config.load(cfg_path).sources[0].frontmatter.date_fields == ()
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        'date_fields = "updated"',
+        "date_fields = [1]",
+        'date_fields = [""]',
+        "status_field = 3",
+        'status_field = ""',
+        'tags_field = ""',
+        'tags_field = ["tags"]',
+    ],
+)
+def test_invalid_frontmatter_keys_raise_with_source_name(
+    tmp_path: Path, vault_dir: Path, line: str
+) -> None:
+    toml = _minimal_toml(tmp_path, vault_dir) + line + "\n"
+    cfg_path = _write(tmp_path / "config.toml", toml)
+
+    with pytest.raises(ConfigError, match="source 'vault'"):
         Config.load(cfg_path)

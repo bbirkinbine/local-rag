@@ -24,7 +24,7 @@ A local vector index addresses both: one MCP-callable search across vault and co
 | Project layout | `pyproject.toml` + `src/local_rag/`, structured for GitHub | Matches repo → clone → populate workflow. |
 | Markdown chunking | Header-aware (split on `^#+ `, attach the heading hierarchy as `heading_path`) | Better recall than line-window for prose; populates the schema's `heading_path` field meaningfully; cheap to implement. |
 | Code chunking | Line-window (~60 lines, 10 overlap) | v1 only — tree-sitter / function-level chunking is the right v2 move (especially for Python), deferred to keep the dep footprint thin. |
-| Markdown preprocessing | Strip YAML frontmatter before chunking | Frontmatter (tags, `created:`, `cowork-authored:` etc.) is metadata noise that pollutes vector clustering. Drop everything between the leading `---` fences. |
+| Markdown preprocessing | Strip YAML frontmatter before chunking | Frontmatter (tags, `created:`, `cowork-authored:` etc.) is metadata noise that pollutes vector clustering. Drop everything between the leading `---` fences from chunk text; since slice 12 the date, status and tags are kept as per-chunk metadata instead. |
 | Hybrid search | BM25 (LanceDB Tantivy FTS) **+** vector, fused at query time | Pure vector misses exact-term queries (function names, `[[wikilink]]` targets, project codenames) — these are the *first* things the user will search for. Tantivy FTS ships with LanceDB; turning it on is ~5 lines. Combine via reciprocal-rank fusion or weighted score over top-k from each. |
 | Embedding API | Ollama `/api/embed` (batch input) | 5–20× faster than per-call `/api/embeddings` for first-run indexing of a real vault. |
 

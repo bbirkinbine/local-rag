@@ -13,11 +13,13 @@ from pathlib import Path
 
 import pytest
 
+from local_rag import mcp_server, mcp_types
 from local_rag.config import Source
 from local_rag.indexer import FileResult, Indexer, IndexResult
 from local_rag.mcp_server import SourceStatus, Tools, build_tools, make_server
 from local_rag.run_status import RunStatusLog
 from local_rag.store import Store
+from tests.legacy_schema import legacy_row, make_legacy_table
 
 DIM = 4
 T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
@@ -186,6 +188,10 @@ def test_search_returns_hits_with_expected_shape(store: Store, tmp_path: Path) -
         "char_start",
         "char_end",
         "text",
+        "note_date",
+        "status",
+        "tags",
+        "kind",
     }
     assert h["source_name"] == "vault"
     assert "body text" in h["text"]
@@ -347,3 +353,70 @@ async def test_search_description_documents_sources_and_k(store: Store) -> None:
     assert search_tool.description is not None
     assert "`sources`" in search_tool.description
     assert "`k`" in search_tool.description
+
+
+# ---------------------------------------------------- frontmatter metadata ---
+
+
+_FM_HEAD = "---\nupdated: 2026-10-19\nstatus: draft\ntags: [alpha, beta]\n---\n"
+
+
+def _meta(hit: dict[str, object]) -> tuple[object, ...]:
+    return (hit["note_date"], hit["status"], hit["tags"], hit["kind"])
+
+
+def test_search_result_carries_note_metadata(store: Store, tmp_path: Path) -> None:
+    _seed(
+        store,
+        tmp_path,
+        "vault",
+        {"a.md": f"{_FM_HEAD}# H\n\nbody\n"},
+    )
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+
+    hits = tools.search("body", sources=None, k=5)
+
+    assert [_meta(dict(h)) for h in hits] == [("2026-10-19", "draft", ["alpha", "beta"], "text")]
+
+
+def test_search_result_without_frontmatter_has_default_metadata(
+    store: Store, tmp_path: Path
+) -> None:
+    _seed(store, tmp_path, "vault", {"a.md": "# H\n\nbody\n"})
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+
+    hits = tools.search("body", sources=None, k=5)
+
+    assert [_meta(dict(h)) for h in hits] == [(None, None, [], "text")]
+
+
+def test_search_hit_from_stale_table_has_default_metadata(tmp_path: Path) -> None:
+    make_legacy_table(
+        tmp_path / "db",
+        "vault",
+        DIM,
+        [legacy_row(path="/old.md", idx=0, text="old body", dim=DIM)],
+    )
+    store = Store(tmp_path / "db", vector_dim=DIM)
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+
+    hits = tools.search("body", sources=None, k=5)
+
+    assert [_meta(dict(h)) for h in hits] == [(None, None, [], "text")]
+
+
+def test_result_types_live_in_mcp_types_and_are_reexported() -> None:
+    names = ("SearchResult", "SourceInfo", "SourceStatus", "IndexStatus")
+    assert all(getattr(mcp_server, n) is getattr(mcp_types, n) for n in names)
+
+
+def test_search_tool_docs_tell_the_caller_to_weigh_note_date(store: Store) -> None:
+    tools = build_tools(store, FakeEmbedder(), configured_sources=[])
+
+    assert "note_date" in (tools.search.__doc__ or "")
+
+
+def test_server_instructions_mention_note_date(store: Store) -> None:
+    server = make_server(build_tools(store, FakeEmbedder(), configured_sources=[]))
+
+    assert "note_date" in (server.instructions or "")

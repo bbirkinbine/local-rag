@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Iterable
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from local_rag.config import Source
+from local_rag.frontmatter import FrontmatterFields
 from local_rag.indexer import Indexer, _file_sha256, _iter_source_files
+from local_rag.schema import StaleSchemaError
 from local_rag.store import Store
+from tests.legacy_schema import legacy_row, make_legacy_table
 
 DIM = 4
 
@@ -390,3 +396,89 @@ def test_index_source_leaves_fts_consistent_across_files(store: Store, tmp_path:
     )
     with_bm25 = [h for h in hits if h.bm25 is not None]
     assert len(with_bm25) == 6
+
+
+# ---------------------------------------------------- frontmatter metadata ---
+
+
+def _legacy_store(tmp_path: Path, name: str = "vault") -> Store:
+    make_legacy_table(
+        tmp_path / "db",
+        name,
+        DIM,
+        [legacy_row(path="/gone.md", idx=0, text="old row", dim=DIM)],
+    )
+    return Store(tmp_path / "db", vector_dim=DIM)
+
+
+def test_force_index_recreates_a_stale_table_with_the_new_schema(
+    tmp_path: Path, src_dir: Path
+) -> None:
+    store = _legacy_store(tmp_path)
+    _write(src_dir / "a.md", "# A\n\nbody\n")
+
+    Indexer(store, FakeEmbedder()).index_source(_make_source("vault", src_dir), force=True)
+
+    assert store.stale_tables(["vault"]) == []
+
+
+def test_force_index_on_stale_table_resets_its_run_log_history(
+    tmp_path: Path, src_dir: Path
+) -> None:
+    store = _legacy_store(tmp_path)
+    store.run_log_path.write_text(
+        json.dumps({"vault": ["2026-10-01T00:00:00+00:00"] * 3}),
+    )
+    _write(src_dir / "a.md", "# A\n\nbody\n")
+
+    Indexer(store, FakeEmbedder()).index_source(_make_source("vault", src_dir), force=True)
+
+    assert len(json.loads(store.run_log_path.read_text())["vault"]) == 1
+
+
+def test_index_without_force_on_stale_table_raises(tmp_path: Path, src_dir: Path) -> None:
+    store = _legacy_store(tmp_path)
+    _write(src_dir / "a.md", "# A\n\nbody\n")
+
+    with pytest.raises(StaleSchemaError):
+        Indexer(store, FakeEmbedder()).index_source(_make_source("vault", src_dir))
+
+
+def test_index_without_force_on_stale_table_embeds_nothing(tmp_path: Path, src_dir: Path) -> None:
+    store = _legacy_store(tmp_path)
+    _write(src_dir / "a.md", "# A\n\nbody\n")
+    embedder = FakeEmbedder()
+
+    with pytest.raises(StaleSchemaError):
+        Indexer(store, embedder).index_source(_make_source("vault", src_dir))
+
+    assert embedder.calls == []
+
+
+def test_indexer_stores_metadata_from_the_sources_frontmatter_fields(
+    store: Store, src_dir: Path
+) -> None:
+    _write(
+        src_dir / "a.md",
+        "---\nmodified: 2026-10-19\nstate: final\nlabels: [x, y]\n---\n# A\n\nbody\n",
+    )
+    fields = FrontmatterFields(date_fields=("modified",), status_field="state", tags_field="labels")
+    src = replace(_make_source("vault", src_dir, type_="markdown"), frontmatter=fields)
+
+    Indexer(store, FakeEmbedder()).index_source(src)
+    hits = store.search_vector(["vault"], query_vector=[1.0] + [0.0] * (DIM - 1), k=5)
+
+    assert {(h.chunk.note_date, h.chunk.status, h.chunk.tags) for h in hits} == {
+        (date(2026, 10, 19), "final", ("x", "y"))
+    }
+
+
+def test_indexer_applies_frontmatter_to_md_files_in_code_sources(
+    store: Store, src_dir: Path
+) -> None:
+    _write(src_dir / "README.md", "---\nstatus: draft\n---\n# A\n\nbody\n")
+
+    Indexer(store, FakeEmbedder()).index_source(_make_source("repo", src_dir, type_="code"))
+    hits = store.search_vector(["repo"], query_vector=[1.0] + [0.0] * (DIM - 1), k=5)
+
+    assert {h.chunk.status for h in hits} == {"draft"}

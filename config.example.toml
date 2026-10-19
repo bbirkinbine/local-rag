@@ -29,6 +29,15 @@ path = "~/Downloads/obsidian-vault"
 type = "markdown"
 # Glob patterns to skip, relative to `path`. default: []
 ignore = [".obsidian/**", ".trash/**"]
+# Frontmatter keys that hold each note's date, status, and tags; they ride
+# on every chunk and come back with search hits. Applies to every .md file,
+# whatever the source type. Changing these takes `local-rag index --force`.
+# Dates: the first key with a YYYY-MM-DD value wins. default: ["updated", "created"]
+date_fields = ["updated", "created"]
+# default: "status"
+status_field = "status"
+# default: "tags"
+tags_field = "tags"
 
 [[sources]]
 name = "local-rag"

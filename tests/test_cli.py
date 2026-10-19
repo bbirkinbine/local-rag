@@ -10,6 +10,8 @@ from local_rag import cli
 from local_rag.embedder import EmbedderError
 from local_rag.indexer import Embedder
 from local_rag.run_status import RunStatusLog
+from local_rag.store import Store
+from tests.legacy_schema import legacy_row, make_legacy_table
 
 DIM = 4
 
@@ -498,3 +500,160 @@ def test_table_touching_commands_raise_the_open_file_limit(
 
     assert rc == 0
     assert calls == [True]
+
+
+# ---------------------------------------------------- frontmatter metadata ---
+# A table built before slice 12 lacks the metadata columns. `index` must
+# refuse to touch it (exit 4) until `index --force` recreates it.
+
+
+def _stale_vault(tmp_path: Path) -> Path:
+    """A config whose `vault` source has a legacy-schema table on disk."""
+
+    make_legacy_table(
+        tmp_path / "db",
+        "vault",
+        DIM,
+        [legacy_row(path="/old.md", idx=0, text="old row", dim=DIM)],
+    )
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n\nbody\n"})
+    return _write_config(tmp_path, [("vault", src_dir, "markdown")])
+
+
+def _is_stale(tmp_path: Path) -> bool:
+    return Store(tmp_path / "db", vector_dim=DIM).stale_tables(["vault"]) == ["vault"]
+
+
+def test_index_on_stale_table_exits_four(tmp_path: Path, patch_embedder: FakeEmbedder) -> None:
+    cfg = _stale_vault(tmp_path)
+
+    assert cli.main(["--config", str(cfg), "index"]) == 4
+
+
+def test_index_on_stale_table_tells_the_user_to_force(
+    tmp_path: Path, patch_embedder: FakeEmbedder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _stale_vault(tmp_path)
+
+    cli.main(["--config", str(cfg), "index"])
+
+    err = capsys.readouterr().err
+    assert "local-rag index --force" in err and "vault" in err
+
+
+def test_index_on_stale_table_embeds_nothing(tmp_path: Path, patch_embedder: FakeEmbedder) -> None:
+    cfg = _stale_vault(tmp_path)
+
+    cli.main(["--config", str(cfg), "index"])
+
+    assert patch_embedder.calls == []
+
+
+def test_index_on_stale_table_leaves_it_untouched(
+    tmp_path: Path, patch_embedder: FakeEmbedder
+) -> None:
+    cfg = _stale_vault(tmp_path)
+
+    cli.main(["--config", str(cfg), "index"])
+
+    assert _is_stale(tmp_path)
+
+
+def test_index_on_stale_table_records_the_run_error(
+    tmp_path: Path, patch_embedder: FakeEmbedder
+) -> None:
+    cfg = _stale_vault(tmp_path)
+
+    cli.main(["--config", str(cfg), "index"])
+
+    last_error = RunStatusLog(tmp_path / "db").read()["vault"]["last_error"]
+    assert last_error is not None and "--force" in last_error
+
+
+def test_index_refuses_every_source_when_any_is_stale(
+    tmp_path: Path, patch_embedder: FakeEmbedder
+) -> None:
+    """The check runs before indexing anything, so a current source isn't
+    half-updated alongside a refused one."""
+
+    make_legacy_table(tmp_path / "db", "vault", DIM, [])
+    vault = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n\nbody\n"})
+    code = _make_source_dir(tmp_path, "code", {"b.py": "x = 1\n"})
+    cfg = _write_config(tmp_path, [("code", code, "code"), ("vault", vault, "markdown")])
+
+    cli.main(["--config", str(cfg), "index"])
+
+    assert patch_embedder.calls == []
+
+
+def test_index_refusal_creates_no_table_for_current_sources(
+    tmp_path: Path, patch_embedder: FakeEmbedder
+) -> None:
+    make_legacy_table(tmp_path / "db", "vault", DIM, [])
+    vault = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n\nbody\n"})
+    code = _make_source_dir(tmp_path, "code", {"b.py": "x = 1\n"})
+    cfg = _write_config(tmp_path, [("code", code, "code"), ("vault", vault, "markdown")])
+
+    cli.main(["--config", str(cfg), "index"])
+
+    assert Store(tmp_path / "db", vector_dim=DIM).list_sources() == ["vault"]
+
+
+def test_index_force_on_stale_table_exits_zero(
+    tmp_path: Path, patch_embedder: FakeEmbedder
+) -> None:
+    cfg = _stale_vault(tmp_path)
+
+    assert cli.main(["--config", str(cfg), "index", "--force"]) == 0
+
+
+def test_index_force_on_stale_table_recreates_it(
+    tmp_path: Path, patch_embedder: FakeEmbedder
+) -> None:
+    cfg = _stale_vault(tmp_path)
+
+    cli.main(["--config", str(cfg), "index", "--force"])
+
+    assert not _is_stale(tmp_path)
+
+
+def test_search_output_shows_note_date_and_status(
+    tmp_path: Path, patch_embedder: FakeEmbedder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    src_dir = _make_source_dir(
+        tmp_path,
+        "vault",
+        {"a.md": "---\nupdated: 2026-10-19\nstatus: draft\n---\n# H\n\nthe quick brown fox\n"},
+    )
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+    cli.main(["--config", str(cfg), "index"])
+    capsys.readouterr()
+
+    cli.main(["--config", str(cfg), "search", "quick"])
+
+    header = next(ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("score="))
+    assert "date=2026-10-19" in header and "status=draft" in header
+
+
+def test_search_output_omits_date_and_status_without_frontmatter(
+    tmp_path: Path, patch_embedder: FakeEmbedder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# H\n\nthe quick brown fox\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+    cli.main(["--config", str(cfg), "index"])
+    capsys.readouterr()
+
+    cli.main(["--config", str(cfg), "search", "quick"])
+
+    out = capsys.readouterr().out
+    assert "date=" not in out and "status=" not in out
+
+
+def test_search_on_stale_table_still_works(
+    tmp_path: Path, patch_embedder: FakeEmbedder, capsys: pytest.CaptureFixture[str]
+) -> None:
+    cfg = _stale_vault(tmp_path)
+
+    rc = cli.main(["--config", str(cfg), "search", "old"])
+
+    assert rc == 0 and "old row" in capsys.readouterr().out

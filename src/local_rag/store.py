@@ -15,10 +15,10 @@ from pathlib import Path
 from typing import Any
 
 import lancedb
-import pyarrow as pa
 import structlog
 
 from local_rag.models import Chunk, SearchHit
+from local_rag.schema import chunk_schema, chunk_to_row, missing_columns, row_to_chunk
 
 log = structlog.get_logger()
 
@@ -152,36 +152,42 @@ class Store:
         """Where run boundaries are recorded, beside the LanceDB tables."""
         return self._run_log_path
 
-    # -------------------------------------------------------------- schema
-
-    def _schema(self) -> pa.Schema:
-        return pa.schema(
-            [
-                pa.field("id", pa.string(), nullable=False),
-                pa.field("source_path", pa.string(), nullable=False),
-                pa.field("file_hash", pa.string(), nullable=False),
-                pa.field("chunk_index", pa.int64(), nullable=False),
-                pa.field("char_start", pa.int64(), nullable=False),
-                pa.field("char_end", pa.int64(), nullable=False),
-                pa.field("heading_path", pa.string(), nullable=False),
-                pa.field("text", pa.string(), nullable=False),
-                pa.field(
-                    "vector",
-                    pa.list_(pa.float32(), self._vector_dim),
-                    nullable=False,
-                ),
-            ]
-        )
-
     # ----------------------------------------------------------- table ops
 
     def ensure_table(self, source_name: str) -> None:
         """Create the table for this source if it doesn't exist. Idempotent."""
         if source_name in self._table_names():
             return
-        tbl = self._db.create_table(source_name, schema=self._schema())
+        tbl = self._db.create_table(source_name, schema=chunk_schema(self._vector_dim))
         # Native LanceDB FTS — auto-updates on subsequent upserts.
         tbl.create_fts_index("text", use_tantivy=False, replace=True)
+
+    def stale_tables(self, names: list[str]) -> list[str]:
+        """Return the tables in ``names`` built with an older schema, in order.
+
+        Reads each table's schema only (no row scan). Names without a table
+        are skipped: ``ensure_table`` creates those with the current schema.
+        """
+        existing = set(self._table_names())
+        return [
+            name
+            for name in names
+            if name in existing and missing_columns(self._db.open_table(name).schema)
+        ]
+
+    def recreate_table(self, source_name: str) -> None:
+        """Drop the table and create it empty with the current schema.
+
+        The migration path for a stale table. Its run-log history goes too:
+        it describes versions of a table that no longer exists, and pruning
+        must not reason from it.
+        """
+        self._db.drop_table(source_name, ignore_missing=True)
+        run_log = self._read_run_log()
+        if run_log.pop(source_name, None) is not None:
+            self._write_run_log(run_log)
+        self.ensure_table(source_name)
+        log.info("store.table_recreated", source=source_name)
 
     def optimize(self, source_name: str, *, keep_runs: int | None = None) -> None:
         """Merge table/index deltas, rebuild the FTS index, prune old runs.
@@ -326,7 +332,7 @@ class Store:
         if not chunks:
             return
         tbl = self._db.open_table(source_name)
-        rows = [self._chunk_to_row(c) for c in chunks]
+        rows = [chunk_to_row(c, self._vector_dim) for c in chunks]
         (
             tbl.merge_insert("id")
             .when_matched_update_all()
@@ -367,7 +373,7 @@ class Store:
                 hits.append(
                     SearchHit(
                         source_name=name,
-                        chunk=self._row_to_chunk(row),
+                        chunk=row_to_chunk(row),
                         score=score,
                         cosine=score,
                     )
@@ -413,12 +419,12 @@ class Store:
             ):
                 key = f"{name}::{row['id']}"
                 rrf[key] = rrf.get(key, 0.0) + 1.0 / (_RRF_K + rank)
-                chunks.setdefault(key, (name, self._row_to_chunk(row)))
+                chunks.setdefault(key, (name, row_to_chunk(row)))
 
             for rank, row in enumerate(self._fts_top(tbl, query_text, expand), start=1):
                 key = f"{name}::{row['id']}"
                 rrf[key] = rrf.get(key, 0.0) + 1.0 / (_RRF_K + rank)
-                chunks.setdefault(key, (name, self._row_to_chunk(row)))
+                chunks.setdefault(key, (name, row_to_chunk(row)))
                 bm25[key] = float(row["_score"])
 
         cosine = {
@@ -512,35 +518,3 @@ class Store:
                 text += "\n" + row_text
             end = row_end
         return text, start, end
-
-    # ------------------------------------------------------------- mapping
-
-    def _chunk_to_row(self, c: Chunk) -> dict[str, Any]:
-        if len(c.vector) != self._vector_dim:
-            raise ValueError(
-                f"chunk {c.id}: vector dim mismatch "
-                f"(expected {self._vector_dim}, got {len(c.vector)})"
-            )
-        return {
-            "id": c.id,
-            "source_path": c.source_path,
-            "file_hash": c.file_hash,
-            "chunk_index": c.chunk_index,
-            "char_start": c.char_start,
-            "char_end": c.char_end,
-            "heading_path": c.heading_path,
-            "text": c.text,
-            "vector": c.vector,
-        }
-
-    def _row_to_chunk(self, row: dict[str, Any]) -> Chunk:
-        return Chunk(
-            source_path=str(row["source_path"]),
-            file_hash=str(row["file_hash"]),
-            chunk_index=int(row["chunk_index"]),
-            char_start=int(row["char_start"]),
-            char_end=int(row["char_end"]),
-            heading_path=str(row["heading_path"]),
-            text=str(row["text"]),
-            vector=[float(x) for x in row["vector"]],
-        )

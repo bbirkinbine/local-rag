@@ -107,6 +107,18 @@ def _cmd_index(config: Config, store: Store, requested: list[str], *, force: boo
         targets = list(config.sources)
 
     status_log = RunStatusLog(config.db_path)
+    # Checked for every target before anything is indexed, and before the
+    # embedder: a refusal must leave the store exactly as it was.
+    stale = store.stale_tables([s.name for s in targets])
+    if stale and not force:
+        msg = (
+            f"index schema out of date for: {', '.join(stale)}; "
+            "run `local-rag index --force` to rebuild (full re-embed)"
+        )
+        _err(msg)
+        status_log.record_error(stale, msg)
+        return 4
+
     try:
         embedder = _build_embedder(config)
         embedder.health_check()
@@ -250,6 +262,10 @@ def _print_hit(hit: SearchHit) -> None:
     header += f"  {hit.source_name}  {hit.chunk.source_path}"
     if hit.chunk.heading_path:
         header += f"  {hit.chunk.heading_path}"
+    if hit.chunk.note_date is not None:
+        header += f"  date={hit.chunk.note_date.isoformat()}"
+    if hit.chunk.status:
+        header += f"  status={hit.chunk.status}"
     print(header)
     for line in hit.chunk.text.rstrip("\n").splitlines():
         print(f"    {line}")
@@ -285,7 +301,10 @@ def _build_parser() -> argparse.ArgumentParser:
     p_idx.add_argument(
         "--force",
         action="store_true",
-        help="re-chunk and re-embed every file, ignoring stored hashes",
+        help=(
+            "re-chunk and re-embed every file, ignoring stored hashes; "
+            "also rebuilds tables with an outdated schema"
+        ),
     )
 
     p_search = sub.add_parser("search", help="hybrid search across sources")
