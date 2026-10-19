@@ -21,8 +21,10 @@ golden-query set from **recall@5 = 0.000 / MRR = 0.000** to
 - [ ] **Down-weight list-heavy chunks** (>70% of lines are bullets) —
       deferred; the chunk cap + cosine ordering already demoted the
       keyword-dense list notes that motivated it.
-- [ ] **Frontmatter filters & boosts** (tags, folder path, mild mtime
-      recency) — only if still needed after real usage.
+- [ ] **Frontmatter filters & boosts** (tags, folder path, mild
+      recency) — only if still needed after real usage. The metadata
+      columns (`note_date`, `status`, `tags`) exist as of 2026-10-19;
+      filters and ranking priors remain.
 
 Constraints unchanged: keep `search(query, sources, k)` backward
 compatible, keep indexing incremental, and give any index-format change a
@@ -47,7 +49,8 @@ the CLI is the universal, token-free agent surface.
 
 - [ ] **`--json` output for `search` (and `list`)** — machine-readable
       CLI results (same fields as the MCP `SearchResult`: score, cosine,
-      bm25, source_name, source_path, heading_path, char offsets, text).
+      bm25, source_name, source_path, heading_path, char offsets, text,
+      note_date, status, tags, kind).
       Makes local-rag a first-class pi tool and usable from shell
       scripts/cron/any harness that can run commands. Small slice;
       tests first per CLAUDE.md.
@@ -57,6 +60,16 @@ the CLI is the universal, token-free agent surface.
       `mcp_server.py`; keep the two in sync.
 - [ ] **`mcp-proxy` recipe** in `docs/claude-integration.md` for
       HTTP-only clients — only if a concrete client shows up.
+
+## Done — frontmatter metadata (2026-10-19)
+
+- [x] **Note date, status and tags on every chunk** — read from each `.md`
+      file's frontmatter by a stdlib parser (per-source key names, generic
+      defaults) and returned with every hit, plus a `kind` column (`"text"`
+      for now) reserved for derived chunk types. Tables built before the
+      new columns are detected: `index` exits 4 until `index --force`
+      rebuilds them, and search against them keeps working. No ranking
+      change. Spec: `docs/specs/slice-12-frontmatter-metadata.md`.
 
 ## Done — index freshness (2026-10-19)
 

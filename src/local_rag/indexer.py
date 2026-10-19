@@ -22,6 +22,8 @@ import structlog
 
 from local_rag.chunkers import chunk_file
 from local_rag.config import Source
+from local_rag.frontmatter import FrontmatterFields
+from local_rag.schema import StaleSchemaError
 from local_rag.store import Store
 
 log = structlog.get_logger()
@@ -109,7 +111,19 @@ class Indexer:
 
         ``force=True`` ignores stored file hashes and re-chunks/re-embeds
         every file — the migration path after a chunker or embedder change.
+        A table built with an older schema is dropped and rebuilt.
+
+        Raises:
+            StaleSchemaError: if the table predates the current schema and
+                ``force`` is false. Nothing is embedded or written.
         """
+        if self._store.stale_tables([source.name]):
+            if not force:
+                raise StaleSchemaError(
+                    f"source {source.name!r} was indexed with an older schema; "
+                    "run `local-rag index --force` to rebuild it"
+                )
+            self._store.recreate_table(source.name)
         self._store.ensure_table(source.name)
         stored = self._store.file_hashes(source.name)
 
@@ -127,7 +141,11 @@ class Indexer:
             if entry.oversize:
                 results.append(FileResult(path=entry.path, status="skipped_oversize"))
             else:
-                results.append(self._process_one(source.name, entry.path, stored, force=force))
+                results.append(
+                    self._process_one(
+                        source.name, entry.path, stored, force=force, fields=source.frontmatter
+                    )
+                )
 
         for stale in sorted(set(stored) - seen_paths):
             removed = self._store.delete_file(source.name, stale)
@@ -148,7 +166,13 @@ class Indexer:
         return IndexResult(source_name=source.name, files=results)
 
     def _process_one(
-        self, source_name: str, file: Path, stored: dict[str, str], *, force: bool = False
+        self,
+        source_name: str,
+        file: Path,
+        stored: dict[str, str],
+        *,
+        force: bool,
+        fields: FrontmatterFields,
     ) -> FileResult:
         try:
             file_hash = _file_sha256(file)
@@ -165,7 +189,7 @@ class Indexer:
             log.warning("indexer.read_failed", path=str(file), error=str(e))
             return FileResult(path=file, status="skipped_unreadable", error=str(e))
 
-        chunks = chunk_file(text, source_path=str(file), file_hash=file_hash)
+        chunks = chunk_file(text, source_path=str(file), file_hash=file_hash, fields=fields)
         if not chunks:
             # Zero-chunk file (empty / whitespace-only). Nothing to embed; drop
             # any prior rows so the store mirrors current truth.

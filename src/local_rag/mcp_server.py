@@ -16,14 +16,28 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol, TypedDict
+from typing import Protocol
 
 import structlog
 from mcp.server.fastmcp import FastMCP
 
 from local_rag.config import Config
-from local_rag.run_status import FailureGroup, RunStatusLog
+from local_rag.mcp_types import IndexStatus, SearchResult, SourceInfo, SourceStatus
+from local_rag.run_status import RunStatusLog
 from local_rag.store import Store
+
+# The result shapes live in ``mcp_types``; re-exported here for callers that
+# import them alongside the tools.
+__all__ = [
+    "IndexStatus",
+    "SearchResult",
+    "SourceInfo",
+    "SourceStatus",
+    "Tools",
+    "build_tools",
+    "make_server",
+    "run_stdio",
+]
 
 log = structlog.get_logger()
 
@@ -38,43 +52,6 @@ class _Embedder(Protocol):
 
     def embed(self, texts: list[str]) -> list[list[float]]: ...
     def health_check(self) -> None: ...
-
-
-# JSON-serializable shapes the tools return.
-
-
-class SearchResult(TypedDict):
-    score: float
-    cosine: float | None
-    bm25: float | None
-    source_name: str
-    source_path: str
-    heading_path: str
-    char_start: int
-    char_end: int
-    text: str
-
-
-class SourceInfo(TypedDict):
-    name: str
-    chunk_count: int
-
-
-class SourceStatus(TypedDict):
-    name: str
-    chunk_count: int
-    last_run: str | None
-    last_run_age_seconds: int | None
-    last_change: str | None
-    last_attempt: str | None
-    last_error: str | None
-    embedding_model: str | None
-    failures: list[FailureGroup]
-
-
-class IndexStatus(TypedDict):
-    total_chunks: int
-    sources: list[SourceStatus]
 
 
 class _SearchTool(Protocol):
@@ -146,6 +123,11 @@ def build_tools(
         a sharp drop-off as the end of the relevant results); `bm25` is the
         raw keyword score (null when the chunk had no lexical match).
 
+        Each hit also carries the note's frontmatter: `note_date` (ISO date,
+        null if none), `status`, and `tags`. When hits disagree, weigh
+        `note_date` — the newer note usually wins — and treat a `status`
+        such as archived or superseded as a retired note. `kind` is "text".
+
         Set `context_chunks` (0-5) to widen each hit with that many
         neighboring chunks on each side of the match — useful when the
         matched chunk alone is too little context and you can't read the
@@ -198,6 +180,10 @@ def build_tools(
                     char_start=char_start,
                     char_end=char_end,
                     text=text,
+                    note_date=h.chunk.note_date.isoformat() if h.chunk.note_date else None,
+                    status=h.chunk.status,
+                    tags=list(h.chunk.tags),
+                    kind=h.chunk.kind,
                 )
             )
         return results
@@ -271,7 +257,9 @@ def make_server(tools: Tools) -> FastMCP:
             "the content is outside the current workspace; use "
             "`list_sources` to discover what's indexed and `index_status` "
             "for chunk counts and index freshness. Hits include `cosine` (strength signal) "
-            "and `bm25` (keyword signal) alongside the fusion rank score."
+            "and `bm25` (keyword signal) alongside the fusion rank score. "
+            "Hits also carry `note_date`/`status`/`tags` from note "
+            "frontmatter: prefer the newer note when hits conflict."
         ),
     )
 

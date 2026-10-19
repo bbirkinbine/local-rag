@@ -2,8 +2,9 @@
 
 Parsing is stdlib-only: ``tomllib`` + ``dataclasses`` + ``pathlib``, with
 validation hand-rolled to keep error messages user-facing and the dependency
-footprint zero. The one package import is ``store``'s run-retention default,
-so the shipped value is defined once rather than restated here.
+footprint zero. The package imports are shipped defaults (``store``'s run
+retention, ``frontmatter``'s field names), so each value is defined once
+rather than restated here.
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, cast
 
+from local_rag.frontmatter import DEFAULT_FRONTMATTER_FIELDS, FrontmatterFields
 from local_rag.store import DEFAULT_KEEP_RUNS
 
 SourceType = Literal["markdown", "code"]
@@ -38,6 +40,7 @@ class Source:
     type: SourceType
     ignore: list[str] = field(default_factory=list)
     respect_gitignore: bool = False
+    frontmatter: FrontmatterFields = DEFAULT_FRONTMATTER_FIELDS
 
 
 @dataclass(frozen=True)
@@ -190,4 +193,30 @@ def _parse_source(d: dict[str, Any]) -> Source:
         type=cast(SourceType, raw_type),
         ignore=list(ignore_raw),
         respect_gitignore=respect,
+        frontmatter=_parse_frontmatter_fields(name, d),
+    )
+
+
+def _parse_frontmatter_fields(name: str, d: dict[str, Any]) -> FrontmatterFields:
+    """Parse a source's optional frontmatter field names; absent keys take defaults.
+
+    Raises:
+        ConfigError: If a key has the wrong type or names an empty field.
+    """
+    defaults = DEFAULT_FRONTMATTER_FIELDS
+    dates = d.get("date_fields", list(defaults.date_fields))
+    # An empty list is allowed: it means "this source has no note dates".
+    if not isinstance(dates, list) or not all(isinstance(f, str) and f for f in dates):
+        raise ConfigError(f"source {name!r}: 'date_fields' must be a list of non-empty strings")
+
+    def single(key: str, default: str) -> str:
+        value = d.get(key, default)
+        if not isinstance(value, str) or not value:
+            raise ConfigError(f"source {name!r}: {key!r} must be a non-empty string")
+        return value
+
+    return FrontmatterFields(
+        date_fields=tuple(dates),
+        status_field=single("status_field", defaults.status_field),
+        tags_field=single("tags_field", defaults.tags_field),
     )

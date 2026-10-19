@@ -31,6 +31,9 @@ name = "vault"
 path = "~/Downloads/obsidian-vault"
 type = "markdown"
 ignore = [".obsidian/**", ".trash/**"]
+date_fields = ["updated", "created"]
+status_field = "status"
+tags_field = "tags"
 
 [[sources]]
 name = "local-rag"
@@ -76,10 +79,32 @@ its own table.
 | `type` | yes | — | `"markdown"` (header-aware chunking) or `"code"` (line-window chunking). |
 | `ignore` | no | `[]` | Glob patterns to skip, relative to `path` (e.g. `".obsidian/**"`). |
 | `respect_gitignore` | no | `false` | Also skip files matched by the repo's `.gitignore`. |
+| `date_fields` | no | `["updated", "created"]` | Frontmatter keys tried in order for the note's date; the first `YYYY-MM-DD` value wins. `[]` means no dates. |
+| `status_field` | no | `"status"` | Frontmatter key holding the note's status. |
+| `tags_field` | no | `"tags"` | Frontmatter key holding the note's tags. |
 
 Regardless of settings, only files on the extension allowlist are indexed and
 files over 1 MB are skipped — see the [spec](specs/local-rag.md) for the exact
 lists.
+
+### Frontmatter metadata
+
+Every `.md` file's YAML frontmatter is read for a date, a status, and tags
+(using the keys above), whatever the source `type`. The values ride on every
+chunk of the note and come back with each search hit as `note_date`,
+`status`, and `tags`; they never enter chunk text or embeddings, and they
+don't change ranking.
+
+The parser understands the subset notes use: flat `key: value` scalars
+(quoted or not), inline lists (`[a, b]`), block lists (`- a`), and comments.
+A date value may carry a time (`2026-10-19T09:30`); only the date is kept.
+A plain-string `tags` value is split on commas and spaces, and a leading `#`
+is dropped. A key with any other shape (nested map, multi-line string,
+anchor, `null`) reads as absent. Frontmatter the parser can't read at all
+gives no metadata and a warning in the log; the note is still indexed.
+
+Changing `date_fields`, `status_field`, or `tags_field` doesn't change any
+file, so incremental indexing won't pick it up: run `local-rag index --force`.
 
 ### `[store]`
 

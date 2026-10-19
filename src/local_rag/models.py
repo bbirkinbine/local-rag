@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 
 
 @dataclass(frozen=True)
@@ -12,6 +13,10 @@ class Chunk:
     The ``(source_path, chunk_index)`` pair is the stable identity used as the
     upsert key. ``file_hash`` is the SHA-256 of the source file's content
     (used to skip re-embedding unchanged files during incremental reindex).
+
+    ``note_date``, ``status``, and ``tags`` come from a markdown note's
+    frontmatter (absent for code and for notes without it). ``kind`` names
+    the chunk type; every chunk is ``"text"`` today.
     """
 
     source_path: str
@@ -22,6 +27,10 @@ class Chunk:
     heading_path: str
     text: str
     vector: list[float]
+    note_date: date | None = None
+    status: str | None = None
+    tags: tuple[str, ...] = ()
+    kind: str = "text"
 
     @property
     def id(self) -> str:

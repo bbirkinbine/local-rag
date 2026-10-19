@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from local_rag.models import Chunk, SearchHit
 from local_rag.store import DEFAULT_KEEP_RUNS, Store
+from tests.legacy_schema import legacy_row, make_legacy_table
 
 DIM = 8
 
@@ -914,3 +917,163 @@ def test_fts_compaction_keeps_every_row_searchable(tmp_path: Path) -> None:
     )
 
     assert any(h.chunk.text == "body 7" for h in found)
+
+
+# ---------------------------------------------------- frontmatter metadata ---
+# Slice 12 adds note_date / status / tags / kind columns. A table built with
+# the older nine-column schema is "stale": still searchable, but `index`
+# refuses to write to it until `--force` recreates it.
+
+_UNIT = [1.0] + [0.0] * (DIM - 1)
+
+
+def _meta_chunk(*, path: str = "/note.md", text: str = "metadata body") -> Chunk:
+    base = _chunk(path=path, idx=0, text=text, char_end=len(text))
+    return replace(
+        base,
+        note_date=date(2026, 10, 19),
+        status="draft",
+        tags=("alpha", "beta"),
+        kind="text",
+    )
+
+
+def _meta_of(hit: SearchHit) -> tuple[object, ...]:
+    c = hit.chunk
+    return (c.note_date, c.status, c.tags, c.kind)
+
+
+def _legacy_store(tmp_path: Path, name: str = "old") -> Store:
+    make_legacy_table(
+        tmp_path / "db",
+        name,
+        DIM,
+        [legacy_row(path="/legacy.md", idx=0, text="legacy metadata body", dim=DIM)],
+    )
+    return Store(tmp_path / "db", vector_dim=DIM)
+
+
+def test_metadata_round_trips_through_hybrid_search(store: Store) -> None:
+    store.ensure_table("vault")
+    store.upsert_chunks("vault", [_meta_chunk()])
+
+    hits = store.search_hybrid(["vault"], query_text="metadata", query_vector=_UNIT, k=5)
+
+    assert [_meta_of(h) for h in hits] == [(date(2026, 10, 19), "draft", ("alpha", "beta"), "text")]
+
+
+def test_metadata_round_trips_through_vector_search(store: Store) -> None:
+    store.ensure_table("vault")
+    store.upsert_chunks("vault", [_meta_chunk()])
+
+    hits = store.search_vector(["vault"], query_vector=_UNIT, k=5)
+
+    assert [_meta_of(h) for h in hits] == [(date(2026, 10, 19), "draft", ("alpha", "beta"), "text")]
+
+
+def test_default_metadata_round_trips_as_defaults(store: Store) -> None:
+    store.ensure_table("vault")
+    store.upsert_chunks("vault", [_chunk(text="plain body", char_end=10)])
+
+    hits = store.search_vector(["vault"], query_vector=_UNIT, k=5)
+
+    assert [_meta_of(h) for h in hits] == [(None, None, (), "text")]
+
+
+def test_stale_tables_flags_a_legacy_schema_table(tmp_path: Path) -> None:
+    store = _legacy_store(tmp_path)
+
+    assert store.stale_tables(["old"]) == ["old"]
+
+
+def test_stale_tables_passes_a_freshly_created_table(store: Store) -> None:
+    store.ensure_table("vault")
+
+    assert store.stale_tables(["vault"]) == []
+
+
+def test_stale_tables_ignores_names_without_a_table(store: Store) -> None:
+    assert store.stale_tables(["never-indexed"]) == []
+
+
+def test_stale_tables_reports_only_stale_names_in_input_order(tmp_path: Path) -> None:
+    make_legacy_table(tmp_path / "db", "zold", DIM, [])
+    make_legacy_table(tmp_path / "db", "aold", DIM, [])
+    store = Store(tmp_path / "db", vector_dim=DIM)
+    store.ensure_table("fresh")
+
+    assert store.stale_tables(["zold", "fresh", "aold"]) == ["zold", "aold"]
+
+
+def test_hybrid_search_on_legacy_table_returns_default_metadata(tmp_path: Path) -> None:
+    store = _legacy_store(tmp_path)
+
+    hits = store.search_hybrid(["old"], query_text="legacy", query_vector=_UNIT, k=5)
+
+    assert [_meta_of(h) for h in hits] == [(None, None, (), "text")]
+
+
+def test_vector_search_on_legacy_table_returns_default_metadata(tmp_path: Path) -> None:
+    store = _legacy_store(tmp_path)
+
+    hits = store.search_vector(["old"], query_vector=_UNIT, k=5)
+
+    assert [_meta_of(h) for h in hits] == [(None, None, (), "text")]
+
+
+def test_hybrid_search_mixes_legacy_and_current_tables(tmp_path: Path) -> None:
+    store = _legacy_store(tmp_path)
+    store.ensure_table("new")
+    store.upsert_chunks("new", [_meta_chunk()])
+
+    hits = store.search_hybrid(["old", "new"], query_text="metadata", query_vector=_UNIT, k=5)
+
+    assert {h.source_name: _meta_of(h) for h in hits} == {
+        "old": (None, None, (), "text"),
+        "new": (date(2026, 10, 19), "draft", ("alpha", "beta"), "text"),
+    }
+
+
+def _seed_run_log(store: Store) -> None:
+    store.run_log_path.write_text(
+        json.dumps(
+            {
+                "old": ["2026-10-01T00:00:00+00:00", "2026-10-02T00:00:00+00:00"],
+                "other": ["2026-10-03T00:00:00+00:00"],
+            }
+        )
+    )
+
+
+def test_recreate_table_leaves_the_table_current(tmp_path: Path) -> None:
+    store = _legacy_store(tmp_path)
+
+    store.recreate_table("old")
+
+    assert store.stale_tables(["old"]) == []
+
+
+def test_recreate_table_drops_existing_rows(tmp_path: Path) -> None:
+    store = _legacy_store(tmp_path)
+
+    store.recreate_table("old")
+
+    assert store.chunk_counts()["old"] == 0
+
+
+def test_recreate_table_clears_that_sources_run_log(tmp_path: Path) -> None:
+    store = _legacy_store(tmp_path)
+    _seed_run_log(store)
+
+    store.recreate_table("old")
+
+    assert json.loads(store.run_log_path.read_text()).get("old", []) == []
+
+
+def test_recreate_table_keeps_other_sources_run_log(tmp_path: Path) -> None:
+    store = _legacy_store(tmp_path)
+    _seed_run_log(store)
+
+    store.recreate_table("old")
+
+    assert json.loads(store.run_log_path.read_text())["other"] == ["2026-10-03T00:00:00+00:00"]

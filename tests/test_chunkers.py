@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import itertools
+from datetime import date
 
 import pytest
 
 from local_rag.chunkers import chunk_code, chunk_file, chunk_markdown
+from local_rag.frontmatter import FrontmatterFields
 from local_rag.models import Chunk
 
 # --------------------------------------------------------------- markdown ---
@@ -405,3 +407,64 @@ def test_code_chunks_not_subject_to_markdown_cap() -> None:
     chunks = chunk_code(text, source_path="/a.py", file_hash="h")
 
     assert len(chunks) == 1
+
+
+# ---------------------------------------------------- frontmatter metadata ---
+
+_FM_NOTE_HEAD = "---\nupdated: 2026-10-19\nstatus: draft\ntags: [alpha, beta]\n---\n"
+
+
+def test_every_markdown_chunk_carries_the_file_metadata() -> None:
+    text = f"{_FM_NOTE_HEAD}# Section\n\n{_paragraphs(20)}\n"
+    chunks = chunk_markdown(text, source_path="/a.md", file_hash="h")
+
+    assert len(chunks) > 1
+    assert {(c.note_date, c.status, c.tags, c.kind) for c in chunks} == {
+        (date(2026, 10, 19), "draft", ("alpha", "beta"), "text")
+    }
+
+
+def test_markdown_without_frontmatter_carries_default_metadata() -> None:
+    chunks = chunk_markdown("# T\n\nbody\n", source_path="/a.md", file_hash="h")
+
+    assert [(c.note_date, c.status, c.tags, c.kind) for c in chunks] == [(None, None, (), "text")]
+
+
+def test_code_chunks_carry_no_metadata() -> None:
+    chunks = chunk_file(f"{_FM_NOTE_HEAD}x = 1\n", source_path="/a.py", file_hash="h")
+
+    assert {(c.note_date, c.status, c.tags, c.kind) for c in chunks} == {(None, None, (), "text")}
+
+
+def test_metadata_parsing_does_not_change_chunk_text_or_offsets() -> None:
+    text = f"{_FM_NOTE_HEAD}# Section\n\n{_paragraphs(12)}\n\n## Sub\n\nshort\n"
+    inert = FrontmatterFields(date_fields=(), status_field="x", tags_field="y")
+
+    with_meta = chunk_markdown(text, source_path="/a.md", file_hash="h")
+    without_meta = chunk_markdown(text, source_path="/a.md", file_hash="h", fields=inert)
+
+    assert [(c.char_start, c.char_end, c.text) for c in with_meta] == [
+        (c.char_start, c.char_end, c.text) for c in without_meta
+    ]
+
+
+def test_metadata_chunks_keep_round_trip_offsets() -> None:
+    text = f"{_FM_NOTE_HEAD}# Section\n\n{_paragraphs(12)}\n"
+    chunks = chunk_markdown(text, source_path="/a.md", file_hash="h")
+
+    assert all(text[c.char_start : c.char_end] == c.text for c in chunks)
+
+
+def test_metadata_stays_out_of_chunk_text() -> None:
+    chunks = chunk_markdown(f"{_FM_NOTE_HEAD}# T\n\nbody\n", source_path="/a.md", file_hash="h")
+
+    assert not any("status: draft" in c.text for c in chunks)
+
+
+def test_chunk_file_forwards_custom_frontmatter_fields() -> None:
+    fields = FrontmatterFields(date_fields=("modified",), status_field="state", tags_field="labels")
+    text = "---\nmodified: 2026-10-19\nstate: final\nlabels: [x]\n---\n# T\n\nbody\n"
+
+    chunks = chunk_file(text, source_path="/a.md", file_hash="h", fields=fields)
+
+    assert chunks[0].status == "final"
