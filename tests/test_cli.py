@@ -9,6 +9,7 @@ import pytest
 from local_rag import cli
 from local_rag.embedder import EmbedderError
 from local_rag.indexer import Embedder
+from local_rag.run_status import RunStatusLog
 
 DIM = 4
 
@@ -208,6 +209,34 @@ def test_index_runs_health_check(tmp_path: Path, patch_embedder: FakeEmbedder) -
     cli.main(["--config", str(cfg), "index"])
 
     assert patch_embedder.health_check_called is True
+
+
+def test_index_records_run_status(tmp_path: Path, patch_embedder: FakeEmbedder) -> None:
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n\nbody\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+
+    cli.main(["--config", str(cfg), "index"])
+
+    assert RunStatusLog(tmp_path / "db").read()["vault"]["last_run"] is not None
+
+
+def test_index_health_check_failure_records_last_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scheduled run that dies at startup must still leave a trace."""
+
+    class DownEmbedder(FakeEmbedder):
+        def health_check(self) -> None:
+            raise EmbedderError("connection refused")
+
+    monkeypatch.setattr(cli, "_build_embedder", lambda *a, **kw: DownEmbedder())
+    src_dir = _make_source_dir(tmp_path, "vault", {"a.md": "# A\n"})
+    cfg = _write_config(tmp_path, [("vault", src_dir, "markdown")])
+
+    rc = cli.main(["--config", str(cfg), "index"])
+
+    assert rc == 3
+    assert "connection refused" in RunStatusLog(tmp_path / "db").read()["vault"]["last_error"]
 
 
 # ------------------------------------------------------------------ search ---
