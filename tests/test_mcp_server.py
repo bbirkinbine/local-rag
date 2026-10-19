@@ -8,16 +8,19 @@ machinery.
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from local_rag.config import Source
-from local_rag.indexer import Indexer
-from local_rag.mcp_server import build_tools, make_server
+from local_rag.indexer import FileResult, Indexer, IndexResult
+from local_rag.mcp_server import SourceStatus, Tools, build_tools, make_server
+from local_rag.run_status import RunStatusLog
 from local_rag.store import Store
 
 DIM = 4
+T0 = datetime(2026, 10, 19, 12, 0, tzinfo=UTC)
 
 
 class FakeEmbedder:
@@ -99,6 +102,66 @@ def test_index_status_reflects_indexed_state(store: Store, tmp_path: Path) -> No
     assert set(by_name) == {"vault", "vault2"}
     assert status["total_chunks"] == sum(by_name.values())
     assert status["total_chunks"] > 0
+
+
+def _status_of(tools: Tools, name: str) -> SourceStatus:
+    return next(s for s in tools.index_status()["sources"] if s["name"] == name)
+
+
+def test_index_status_reports_last_run(store: Store, tmp_path: Path) -> None:
+    _seed(store, tmp_path, "vault", {"a.md": "# A\n\nbody\n"})
+    status_log = RunStatusLog(tmp_path / "db")
+    status_log.record_run(
+        IndexResult(source_name="vault", files=[]), embedding_model="bge-m3", now=T0
+    )
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"], status_log=status_log)
+
+    assert _status_of(tools, "vault")["last_run"] == T0.isoformat()
+
+
+def test_index_status_reports_last_run_age(store: Store, tmp_path: Path) -> None:
+    status_log = RunStatusLog(tmp_path / "db")
+    status_log.record_run(
+        IndexResult(source_name="vault", files=[]), embedding_model="bge-m3", now=T0
+    )
+    tools = build_tools(
+        store,
+        FakeEmbedder(),
+        configured_sources=["vault"],
+        status_log=status_log,
+        now=lambda: T0 + timedelta(minutes=45),
+    )
+
+    assert _status_of(tools, "vault")["last_run_age_seconds"] == 45 * 60
+
+
+def test_index_status_lists_configured_but_unindexed_source(store: Store) -> None:
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"])
+
+    entry = _status_of(tools, "vault")
+
+    assert (entry["chunk_count"], entry["last_run"]) == (0, None)
+
+
+def test_index_status_reports_last_error(store: Store, tmp_path: Path) -> None:
+    status_log = RunStatusLog(tmp_path / "db")
+    status_log.record_error(["vault"], "embedder unreachable", now=T0)
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"], status_log=status_log)
+
+    assert _status_of(tools, "vault")["last_error"] == "embedder unreachable"
+
+
+def test_index_status_reports_failures(store: Store, tmp_path: Path) -> None:
+    status_log = RunStatusLog(tmp_path / "db")
+    bad = FileResult(path=Path("/v/x.md"), status="error", error="boom")
+    status_log.record_run(
+        IndexResult(source_name="vault", files=[bad]), embedding_model="bge-m3", now=T0
+    )
+    tools = build_tools(store, FakeEmbedder(), configured_sources=["vault"], status_log=status_log)
+
+    assert _status_of(tools, "vault")["failures"] == [
+        {"error": "boom", "count": 1, "example_path": "/v/x.md"}
+    ]
 
 
 # ------------------------------------------------------------------ search ---

@@ -51,6 +51,8 @@ call them based on your prompts. Prompts that tend to trigger a call:
 
 - "Search my vault for notes on RRF tuning" → `search`
 - "What's indexed in local-rag?" → `list_sources` or `index_status`
+- "Is the index up to date?" → `index_status` (per source: last run, last
+  change, startup errors such as Ollama unreachable, and files that failed)
 - "Find my notes about consulting upsell strategy" → `search`
 
 Prompts that won't: ones that look answerable from the current

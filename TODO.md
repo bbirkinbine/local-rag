@@ -58,6 +58,15 @@ the CLI is the universal, token-free agent surface.
 - [ ] **`mcp-proxy` recipe** in `docs/claude-integration.md` for
       HTTP-only clients — only if a concrete client shows up.
 
+## Done — index freshness (2026-10-19)
+
+- [x] **Freshness in `index_status`** — every `index` run records per
+      source its last run, last change, embedding model, startup error
+      (e.g. Ollama unreachable) and failed files grouped by error, in
+      `.index_status.json` beside the DB. `index_status` reports them, plus
+      configured sources that were never indexed, so a caller can tell a
+      stale index from a missing note.
+
 ## Done — ranking quality & tool adoption (2026-07-09)
 
 - [x] **Eval harness** — `local-rag eval` runs a golden-query set against

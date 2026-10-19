@@ -28,6 +28,7 @@ from local_rag.mcp_server import run_stdio
 from local_rag.models import SearchHit
 from local_rag.paths import default_config_path
 from local_rag.rlimit import raise_open_file_limit
+from local_rag.run_status import RunStatusLog
 from local_rag.store import Store
 
 log = structlog.get_logger()
@@ -105,16 +106,19 @@ def _cmd_index(config: Config, store: Store, requested: list[str], *, force: boo
     else:
         targets = list(config.sources)
 
+    status_log = RunStatusLog(config.db_path)
     try:
         embedder = _build_embedder(config)
         embedder.health_check()
     except EmbedderError as e:
         _err(f"embedder unreachable: {e}")
+        status_log.record_error([s.name for s in targets], f"embedder unreachable: {e}")
         return 3
 
     indexer = Indexer(store, embedder)
     for source in targets:
         result = indexer.index_source(source, force=force)
+        status_log.record_run(result, embedding_model=config.embedding.model)
         _print_index_summary(result)
     return 0
 

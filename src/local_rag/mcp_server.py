@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Protocol, TypedDict
 
 import structlog
 from mcp.server.fastmcp import FastMCP
 
 from local_rag.config import Config
+from local_rag.run_status import FailureGroup, RunStatusLog
 from local_rag.store import Store
 
 log = structlog.get_logger()
@@ -58,9 +60,21 @@ class SourceInfo(TypedDict):
     chunk_count: int
 
 
+class SourceStatus(TypedDict):
+    name: str
+    chunk_count: int
+    last_run: str | None
+    last_run_age_seconds: int | None
+    last_change: str | None
+    last_attempt: str | None
+    last_error: str | None
+    embedding_model: str | None
+    failures: list[FailureGroup]
+
+
 class IndexStatus(TypedDict):
     total_chunks: int
-    sources: list[SourceInfo]
+    sources: list[SourceStatus]
 
 
 class _SearchTool(Protocol):
@@ -85,12 +99,28 @@ class Tools:
     index_status: Callable[[], IndexStatus]
 
 
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
 def build_tools(
     store: Store,
     embedder: _Embedder,
     configured_sources: list[str],
+    *,
+    status_log: RunStatusLog | None = None,
+    now: Callable[[], datetime] = _utc_now,
 ) -> Tools:
-    """Bind the store/embedder/config to a ``Tools`` payload of pure functions."""
+    """Bind the store/embedder/config to a ``Tools`` payload of pure functions.
+
+    Args:
+        store: The chunk store to search.
+        embedder: Embeds queries.
+        configured_sources: Sources searched when ``search`` gets no filter.
+        status_log: Freshness record ``index_status`` reports from. ``None``
+            reports every source as never indexed.
+        now: Clock for ``last_run_age_seconds``; injectable for tests.
+    """
 
     def search(
         query: str,
@@ -181,11 +211,53 @@ def build_tools(
         return [SourceInfo(name=name, chunk_count=counts[name]) for name in sorted(counts)]
 
     def index_status() -> IndexStatus:
-        sources = list_sources()
+        """Chunk counts and freshness for every indexed or configured source.
+
+        Check this when a note you expect is missing from `search`: a stale
+        `last_run` means the note may simply not be indexed yet. Per source:
+        `last_run` / `last_run_age_seconds` is the last completed indexing
+        run; `last_change` the last run that changed anything; `last_error`
+        is set when the latest attempt failed before indexing (e.g. Ollama
+        unreachable) and cleared by the next good run; `failures` groups
+        files the last run could not index by error message. Timestamps are
+        ISO-8601 UTC; null `last_run` means never indexed.
+        """
+        counts = store.chunk_counts()
+        runs = status_log.read() if status_log is not None else {}
+        current = now()
+        sources: list[SourceStatus] = []
+        for name in sorted(set(counts) | set(configured_sources)):
+            run = runs.get(name)
+            last_run = run["last_run"] if run else None
+            sources.append(
+                SourceStatus(
+                    name=name,
+                    chunk_count=counts.get(name, 0),
+                    last_run=last_run,
+                    last_run_age_seconds=_age_seconds(last_run, current),
+                    last_change=run["last_change"] if run else None,
+                    last_attempt=run["last_attempt"] if run else None,
+                    last_error=run["last_error"] if run else None,
+                    embedding_model=run["embedding_model"] if run else None,
+                    failures=run["failures"] if run else [],
+                )
+            )
         total = sum(s["chunk_count"] for s in sources)
         return IndexStatus(total_chunks=total, sources=sources)
 
     return Tools(search=search, list_sources=list_sources, index_status=index_status)
+
+
+def _age_seconds(stamp: str | None, current: datetime) -> int | None:
+    """Whole seconds from ISO-8601 ``stamp`` to ``current``; ``None`` if unknown."""
+    if stamp is None:
+        return None
+    try:
+        then = datetime.fromisoformat(stamp)
+    except ValueError:
+        log.warning("mcp.bad_run_timestamp", value=stamp)
+        return None
+    return int((current - then).total_seconds())
 
 
 def make_server(tools: Tools) -> FastMCP:
@@ -198,7 +270,7 @@ def make_server(tools: Tools) -> FastMCP:
             "grep when the match is conceptual (no shared keywords) or "
             "the content is outside the current workspace; use "
             "`list_sources` to discover what's indexed and `index_status` "
-            "for chunk counts. Hits include `cosine` (strength signal) "
+            "for chunk counts and index freshness. Hits include `cosine` (strength signal) "
             "and `bm25` (keyword signal) alongside the fusion rank score."
         ),
     )
@@ -221,6 +293,7 @@ def run_stdio(config: Config, store: Store, embedder: _Embedder) -> None:
         store,
         embedder,
         configured_sources=[s.name for s in config.sources],
+        status_log=RunStatusLog(config.db_path),
     )
     server = make_server(tools)
     log.info("mcp.stdio.starting", tools=["search", "list_sources", "index_status"])
