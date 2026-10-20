@@ -48,12 +48,13 @@ A small Python tool that indexes the Obsidian vault and selected source repos in
 - **Don't** index by default. Every source must be opt-in via a `[[sources]]` block in the config; third-party clones under `~/Downloads/src/` stay invisible unless explicitly added.
 - `pyproject.toml` `[tool.uv]` section — ask first.
 
-## Open work / current state (updated 2026-07-09)
+## Open work / current state (updated 2026-10-19)
 
 - Implementation complete through the stdio MCP server; both Claude Code and Cowork integrations verified end-to-end. The HTTP/HTTPS transport was removed 2026-07-09 (no consumers — stdio only).
 - Full spec at `docs/specs/local-rag.md` — read this before any slice.
 - The 2026-07-09 ranking-quality push shipped: golden-query eval harness (`local-rag eval`, supports negative queries), ~1,200-char markdown chunk cap, real scores (`cosine`/`bm25`), cosine-plus-lexical-boost ranking, and fixes for LanceDB FTS delta bugs (`Store.optimize`, `_fts_top`).
-- Next actionable front: portability to non-Claude harnesses (see `TODO.md` § portability) — `--json` CLI output first; note that pi-style harnesses are CLI-first with no built-in MCP. The ranking items that remain are wait-for-evidence (grow the golden set from real usage before tuning further).
+- 2026-10-19: slice 11 (freshness in `index_status`) and slice 12 (frontmatter `note_date`/`status`/`tags` + reserved `kind` column on every chunk; `index` exits 4 on pre-slice tables until `index --force`) shipped. How the parts fit and what models see: `docs/architecture.md`.
+- Next: slice 13 (opt-in recency/status/path ranking priors; spec drafted on branch `feat/ranking-priors`, awaiting approval), then slices 14–15. Portability (`--json` CLI output, see `TODO.md`) remains open; pi-style harnesses are CLI-first with no built-in MCP.
 - **Never commit personal vault paths or note names** — golden-query eval data lives in gitignored `*.local.toml` files.
 
 ## Repository / publishing

@@ -145,5 +145,6 @@ has `keep_runs` runs to work with again.
 ## Internals
 
 Behavior that isn't configurable — the extension allowlist, the 1 MB per-file
-size cap, the incremental SHA-256 hashing rules — is documented in the
-[spec](specs/local-rag.md).
+size cap, the incremental SHA-256 hashing rules, chunk sizes, ranking — is
+described in [architecture](architecture.md), with the original design
+record in the [spec](specs/local-rag.md).

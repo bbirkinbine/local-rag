@@ -4,6 +4,11 @@
 `index_status`) over a stdio MCP server. Both first-party clients spawn
 that server themselves — there is no long-running process to manage.
 
+For the full tool reference — parameters, every field a hit returns
+(`cosine`, `bm25`, `heading_path`, `note_date`, `status`, `tags`, …) and how
+a model should read them — see
+[architecture.md → What models can use](architecture.md#what-models-can-use).
+
 ## Capability matrix
 
 | Client                       | How it reaches local-rag                          | local-rag status |
@@ -54,6 +59,8 @@ call them based on your prompts. Prompts that tend to trigger a call:
 - "Is the index up to date?" → `index_status` (per source: last run, last
   change, startup errors such as Ollama unreachable, and files that failed)
 - "Find my notes about consulting upsell strategy" → `search`
+- "Which of my notes on this is most current?" → `search`, then the model
+  compares each hit's `note_date` and `status`
 
 Prompts that won't: ones that look answerable from the current
 working-directory context alone (Claude Code already has `Grep`/`Read`
@@ -209,6 +216,12 @@ the usual diagnostics.
 **Any client: empty results for every query** — Confirm the index ran
 and has rows: `uv run local-rag list`. If counts are zero or look wrong,
 re-run `uv run local-rag index` and check stderr for errors.
+
+**Any client: new result fields missing after an upgrade** — The stdio
+server keeps the code it started with. Restart Claude Code / fully quit
+and relaunch the desktop app. If fields like `note_date` come back empty
+for every hit, the index predates them: see
+[deployment.md → Upgrading](deployment.md#upgrading).
 
 **Any client: stale results after editing the vault** — The server
 reads a fresh table snapshot per query, so results reflect indexed

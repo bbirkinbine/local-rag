@@ -29,8 +29,23 @@ queries — stays on your machine.
                                                                 - index_status
 ```
 
-One [LanceDB] table per configured source. Hybrid search fuses vector + BM25
-results via Reciprocal Rank Fusion.
+One [LanceDB] table per configured source, embedded locally with
+[Ollama] `bge-m3`. Hybrid search gathers candidates by vector similarity and
+BM25 keyword match, then ranks them by cosine similarity plus a small,
+bounded keyword boost.
+
+What a model gets from each `search` hit:
+
+- the matching chunk, with its file, heading path and character offsets;
+- honest scores: `cosine` for strength, `bm25` for keyword match;
+- the note's `note_date`, `status` and `tags`, read from its frontmatter, so
+  it can prefer the newer of two disagreeing notes.
+
+`index_status` reports when each source was last indexed and what failed,
+so a model can tell a stale index from a missing note.
+
+How each part works and why it was chosen →
+[`docs/architecture.md`](docs/architecture.md).
 
 ## Requirements
 
@@ -53,10 +68,26 @@ Nothing is indexed until you write a config — copy
 `~/.config/local-rag/config.toml` and edit the paths. Every optional key in it
 is spelled out at its shipped default.
 
+Then build the index (the first run embeds everything and takes a while):
+
+```bash
+uv run local-rag index
+uv run local-rag search "something you wrote about"
+```
+
+## Upgrading
+
+`git pull && uv sync`, then run `uv run local-rag index`. If it exits with
+code 4, the upgrade changed the index schema: run
+`uv run local-rag index --force` once to rebuild it. Restart your MCP
+clients afterwards so their servers load the new code. Details:
+[`docs/deployment.md`](docs/deployment.md#upgrading).
+
 ## Next steps
 
+- How it works and why → [`docs/architecture.md`](docs/architecture.md)
 - Configure what gets indexed → [`docs/configuration.md`](docs/configuration.md)
-- Use it from the CLI → [`docs/cli.md`](docs/cli.md)
+- Use it from the CLI (including `eval` for retrieval quality) → [`docs/cli.md`](docs/cli.md)
 - Wire it into a Claude client → [`docs/claude-integration.md`](docs/claude-integration.md)
 - Run on a schedule (cron, `launchd`) → [`docs/deployment.md`](docs/deployment.md)
 - Full spec → [`docs/specs/local-rag.md`](docs/specs/local-rag.md)
