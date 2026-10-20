@@ -54,7 +54,7 @@ A small Python tool that indexes the Obsidian vault and selected source repos in
 - Full spec at `docs/specs/local-rag.md` — read this before any slice.
 - The 2026-07-09 ranking-quality push shipped: golden-query eval harness (`local-rag eval`, supports negative queries), ~1,200-char markdown chunk cap, real scores (`cosine`/`bm25`), cosine-plus-lexical-boost ranking, and fixes for LanceDB FTS delta bugs (`Store.optimize`, `_fts_top`).
 - 2026-10-19: slice 11 (freshness in `index_status`) and slice 12 (frontmatter `note_date`/`status`/`tags` + reserved `kind` column on every chunk; `index` exits 4 on pre-slice tables until `index --force`) shipped. How the parts fit and what models see: `docs/architecture.md`.
-- Next: slice 13 (opt-in recency/status/path ranking priors; spec drafted on branch `feat/ranking-priors`, awaiting approval), then slices 14–15. Portability (`--json` CLI output, see `TODO.md`) remains open; pi-style harnesses are CLI-first with no built-in MCP.
+- Slice 13 (ranking priors) is deferred — see its spec and `TODO.md`. Next candidates: slice 15 (note-level summary chunks, targets the sibling-notes miss) or slice 14 (callout chunks). Portability (`--json` CLI output, see `TODO.md`) remains open; pi-style harnesses are CLI-first with no built-in MCP.
 - **Never commit personal vault paths or note names** — golden-query eval data lives in gitignored `*.local.toml` files.
 
 ## Repository / publishing

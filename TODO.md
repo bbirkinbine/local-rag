@@ -23,8 +23,13 @@ golden-query set from **recall@5 = 0.000 / MRR = 0.000** to
       keyword-dense list notes that motivated it.
 - [ ] **Frontmatter filters & boosts** (tags, folder path, mild
       recency) — only if still needed after real usage. The metadata
-      columns (`note_date`, `status`, `tags`) exist as of 2026-10-19;
-      filters and ranking priors remain.
+      columns (`note_date`, `status`, `tags`) exist as of 2026-10-19.
+      Global ranking priors were designed and **deferred** (slice 13,
+      `docs/specs/slice-13-ranking-priors.md`): recency isn't topic-aware
+      (newer research isn't better research), and the model already
+      weighs `note_date`/`status` per question. Trigger to revisit: a real
+      query where an archived or legacy note crowds out the right one —
+      then prefer a per-query `exclude_status`-style filter on `search`.
 
 Constraints unchanged: keep `search(query, sources, k)` backward
 compatible, keep indexing incremental, and give any index-format change a

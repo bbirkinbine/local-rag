@@ -1,5 +1,23 @@
 # Slice 13 — Recency, status, and path priors in ranking (opt-in)
 
+> **Status: deferred (2026-10-19), not implemented.** Kept as a design
+> record. Reasons:
+>
+> - **Recency isn't topic-aware.** It boosts every near-tie, but for
+>   research notes newer is not better; recency only means "current" where
+>   newer notes replace older ones (runbooks, configs, project status).
+> - **Status and path demotions apply to every query**, including history
+>   questions where an archived note is the right answer. The calling model
+>   already sees `note_date` and `status` on each hit and can judge per
+>   question.
+> - **No evidence of the problem yet.** No golden query or real session has
+>   shown an archived or legacy note displacing the right one.
+>
+> Revisit when a real query shows a retired note crowding the right one out
+> of the results. A per-query filter (e.g. an `exclude_status` parameter on
+> `search`, chosen by the model) is likely a better shape than a global
+> prior; any recency prior should be scoped to folders the user chooses.
+
 Depends on slice 12 (`note_date` / `status` on every chunk). Off by
 default: with no `[ranking]` settings, ordering is identical to today.
 
