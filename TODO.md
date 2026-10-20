@@ -13,6 +13,14 @@ golden-query set from **recall@5 = 0.000 / MRR = 0.000** to
       against a strict golden entry. Revisit only if real usage shows the
       "specific note among close siblings" case matters; candidate levers
       are heading-path/title term boosts or BM25-weighted blending.
+      **Generated note summaries (planned slice 15) deferred 2026-10-19:**
+      having a local LLM write summaries at index time turns local-rag
+      from an index of what you wrote into a content generator (second
+      Ollama model, much slower first run, invented text in the index).
+      If this case starts to matter, try in order: (1) index the note's
+      title as a searchable signal (deterministic, one reindex);
+      (2) index a summary the author wrote in frontmatter (`summary:` /
+      `description:`); generated summaries only as a last resort.
 - [ ] **Grow the golden set** as new real queries succeed or fail in
       Cowork/Claude Code sessions (gitignored `eval/golden.local.toml`);
       three queries is too few to trust the metrics' stability. An
