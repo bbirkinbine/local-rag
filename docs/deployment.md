@@ -5,7 +5,8 @@ the MCP server never re-indexes. Search results are only as fresh as the
 last `local-rag index` run. The stdio servers that Claude Code and Cowork
 spawn read a fresh LanceDB snapshot per query, so a completed index run is
 visible immediately — no restarts needed, and the indexer is safe to run
-while a server is up.
+while a server is up. (Upgrading local-rag's *code* is different: see
+[Upgrading](#upgrading).)
 
 All examples are macOS-native. Paths use `<you>` as a placeholder for
 your macOS short username (the directory under `/Users/`); substitute
@@ -184,6 +185,38 @@ client, front the stdio server with a generic adapter such as
 
 ---
 
+## Upgrading
+
+The scheduled job and the MCP servers both run whatever code is checked out
+in your clone, so a `git pull` changes what runs. After pulling:
+
+```bash
+uv sync
+uv run local-rag index
+```
+
+**Exit code 4 means the upgrade changed the index schema** (new columns).
+Plain `index` refuses to touch outdated tables, and the scheduled job keeps
+failing with exit 4 until they're rebuilt; `index_status` shows the refusal
+as each source's `last_error`. Search keeps working against the old tables
+meanwhile, with the new fields empty. Rebuild once:
+
+```bash
+launchctl bootout gui/$(id -u)/com.<you>.local-rag-index    # pause the schedule
+uv run local-rag index --force                              # full re-embed; minutes on a large vault
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.<you>.local-rag-index.plist
+```
+
+Pausing the schedule keeps a scheduled run from indexing alongside the
+rebuild. Searches against a source return partial results until its rebuild
+finishes.
+
+**Then restart your MCP clients** (Claude Code, the Claude desktop app). A
+running stdio server keeps the code it started with, so it won't return new
+result fields until its client restarts it.
+
+---
+
 ## Log management
 
 The launchd plist above appends forever to a single log file. For a
@@ -262,6 +295,9 @@ needs no adjustment if you change it.
 
 Pruned copies are not backups: the store is fully derived, so
 `local-rag index --force` rebuilds it from the sources.
+
+**Every scheduled run exits 4 / logs "index schema out of date"** — an
+upgrade added index columns; see [Upgrading](#upgrading).
 
 **Every scheduled run logs "embedder unreachable"** — Ollama isn't
 running, or doesn't have `bge-m3` pulled. `ollama list` and

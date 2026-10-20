@@ -25,7 +25,7 @@ A local vector index addresses both: one MCP-callable search across vault and co
 | Markdown chunking | Header-aware (split on `^#+ `, attach the heading hierarchy as `heading_path`) | Better recall than line-window for prose; populates the schema's `heading_path` field meaningfully; cheap to implement. |
 | Code chunking | Line-window (~60 lines, 10 overlap) | v1 only — tree-sitter / function-level chunking is the right v2 move (especially for Python), deferred to keep the dep footprint thin. |
 | Markdown preprocessing | Strip YAML frontmatter before chunking | Frontmatter (tags, `created:`, `cowork-authored:` etc.) is metadata noise that pollutes vector clustering. Drop everything between the leading `---` fences from chunk text; since slice 12 the date, status and tags are kept as per-chunk metadata instead. |
-| Hybrid search | BM25 (LanceDB Tantivy FTS) **+** vector, fused at query time | Pure vector misses exact-term queries (function names, `[[wikilink]]` targets, project codenames) — these are the *first* things the user will search for. Tantivy FTS ships with LanceDB; turning it on is ~5 lines. Combine via reciprocal-rank fusion or weighted score over top-k from each. |
+| Hybrid search | BM25 (LanceDB FTS) **+** vector, fused at query time | Pure vector misses exact-term queries (function names, `[[wikilink]]` targets, project codenames) — these are the *first* things the user will search for. FTS ships with LanceDB; turning it on is ~5 lines. Combine via reciprocal-rank fusion or weighted score over top-k from each. *As built: LanceDB's native FTS (not Tantivy); both modalities gather candidates and the final order is cosine plus a bounded BM25 boost, with RRF breaking ties (2026-07-09 eval).* |
 | Embedding API | Ollama `/api/embed` (batch input) | 5–20× faster than per-call `/api/embeddings` for first-run indexing of a real vault. |
 
 ## Decisions (deferred / open questions)
@@ -48,7 +48,7 @@ A local vector index addresses both: one MCP-callable search across vault and co
                                                                       - index_status
 ```
 
-One LanceDB table per source. Each row: `{id, source_path, file_hash, chunk_index, char_start, char_end, heading_path, text, vector}`.
+One LanceDB table per source. Each row: `{id, source_path, file_hash, chunk_index, char_start, char_end, heading_path, text, vector, note_date, status, tags, kind}` (the last four since slice 12). The current, detailed picture — including how ranking evolved from this design — is in [`docs/architecture.md`](../architecture.md).
 
 ## Sources — initial config
 
@@ -92,8 +92,10 @@ keep_runs = 24
 ```
 local-rag index             # incremental reindex of all sources
 local-rag index <source>    # reindex one
+local-rag index --force     # full re-chunk/re-embed; rebuilds outdated tables
 local-rag search "query"    # one-shot CLI search
 local-rag list              # show sources + chunk counts
+local-rag eval              # golden-query retrieval eval (recall@k / MRR)
 local-rag mcp               # run MCP server (stdio)
 ```
 
@@ -138,7 +140,7 @@ model capabilities:
   `search` wins (conceptual similarity without shared keywords; content
   outside the current project) or it goes uncalled.
 
-## Open work / current state (2026-07-09)
+## Open work / current state (2026-10-19)
 
 - Implementation complete through the MCP server: config/paths, embedder
   client, store, chunkers, indexer, CLI, and the stdio MCP server (slices
@@ -155,6 +157,13 @@ model capabilities:
   by cosine plus a bounded lexical boost, and workarounds for LanceDB 0.30
   native-FTS delta bugs (`Store.optimize` per indexing run, exact top-n
   recovery at query time). Remaining `TODO.md` items are wait-for-evidence.
+- Slice 11 (2026-10-19): `index_status` reports per-source freshness — last
+  run, last change, startup errors, failed files — from `.index_status.json`.
+- Slice 12 (2026-10-19): frontmatter date, status and tags ride on every
+  chunk and come back with each hit, plus a reserved `kind` column. Tables
+  built before it are refused by `index` (exit 4) until `index --force`.
+- Next: slice 13, opt-in recency/status/path priors in ranking (spec in
+  progress).
 
 ## References
 

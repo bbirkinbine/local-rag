@@ -110,7 +110,8 @@ artifacts are enough:
 
 ## Models used
 
-- Implementation and review: Claude Opus 4.7 (1M context) via Claude Code.
+- Implementation and review: Claude Opus 4.7 (1M context) via Claude Code
+  through slice 10; Claude Opus 5.5 via Claude Code from slice 11 on.
 - The reviewer and implementer subagents are the same model class but
   separate process instances — they don't share conversation state, which
   is what makes the review independent.
