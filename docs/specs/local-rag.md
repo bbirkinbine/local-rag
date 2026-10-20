@@ -162,8 +162,8 @@ model capabilities:
 - Slice 12 (2026-10-19): frontmatter date, status and tags ride on every
   chunk and come back with each hit, plus a reserved `kind` column. Tables
   built before it are refused by `index` (exit 4) until `index --force`.
-- Next: slice 13, opt-in recency/status/path priors in ranking (spec in
-  progress).
+- Slice 13 (opt-in ranking priors) was designed and deferred; see
+  `slice-13-ranking-priors.md`.
 
 ## References
 

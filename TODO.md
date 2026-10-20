@@ -13,6 +13,14 @@ golden-query set from **recall@5 = 0.000 / MRR = 0.000** to
       against a strict golden entry. Revisit only if real usage shows the
       "specific note among close siblings" case matters; candidate levers
       are heading-path/title term boosts or BM25-weighted blending.
+      **Generated note summaries (planned slice 15) deferred 2026-10-19:**
+      having a local LLM write summaries at index time turns local-rag
+      from an index of what you wrote into a content generator (second
+      Ollama model, much slower first run, invented text in the index).
+      If this case starts to matter, try in order: (1) index the note's
+      title as a searchable signal (deterministic, one reindex);
+      (2) index a summary the author wrote in frontmatter (`summary:` /
+      `description:`); generated summaries only as a last resort.
 - [ ] **Grow the golden set** as new real queries succeed or fail in
       Cowork/Claude Code sessions (gitignored `eval/golden.local.toml`);
       three queries is too few to trust the metrics' stability. An
@@ -23,8 +31,13 @@ golden-query set from **recall@5 = 0.000 / MRR = 0.000** to
       keyword-dense list notes that motivated it.
 - [ ] **Frontmatter filters & boosts** (tags, folder path, mild
       recency) — only if still needed after real usage. The metadata
-      columns (`note_date`, `status`, `tags`) exist as of 2026-10-19;
-      filters and ranking priors remain.
+      columns (`note_date`, `status`, `tags`) exist as of 2026-10-19.
+      Global ranking priors were designed and **deferred** (slice 13,
+      `docs/specs/slice-13-ranking-priors.md`): recency isn't topic-aware
+      (newer research isn't better research), and the model already
+      weighs `note_date`/`status` per question. Trigger to revisit: a real
+      query where an archived or legacy note crowds out the right one —
+      then prefer a per-query `exclude_status`-style filter on `search`.
 
 Constraints unchanged: keep `search(query, sources, k)` backward
 compatible, keep indexing incremental, and give any index-format change a
