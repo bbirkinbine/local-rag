@@ -1,6 +1,6 @@
 # Project: local-rag
 
-A small Python tool that indexes the Obsidian vault and selected source repos into a local LanceDB store, embeds with Ollama `bge-m3`, and exposes semantic search over MCP (stdio) so both Cowork and Claude Code in VS Code can query notes + code together. Privacy-first: no cloud APIs, no API keys, no quotas. The full spec lives at `docs/specs/local-rag.md`.
+A small Python tool that indexes the Obsidian vault and selected source repos into a local LanceDB store, embeds with Ollama `bge-m3`, and exposes semantic search over MCP (stdio) so Cowork, Claude Code in VS Code, Pi, and other MCP clients can query notes + code together. Privacy-first: no cloud APIs, no API keys, no quotas. The full spec lives at `docs/specs/local-rag.md`.
 
 ## Stack
 
@@ -48,13 +48,13 @@ A small Python tool that indexes the Obsidian vault and selected source repos in
 - **Don't** index by default. Every source must be opt-in via a `[[sources]]` block in the config; third-party clones under `~/Downloads/src/` stay invisible unless explicitly added.
 - `pyproject.toml` `[tool.uv]` section — ask first.
 
-## Open work / current state (updated 2026-10-19)
+## Open work / current state (updated 2026-11-13)
 
-- Implementation complete through the stdio MCP server; both Claude Code and Cowork integrations verified end-to-end. The HTTP/HTTPS transport was removed 2026-07-09 (no consumers — stdio only).
+- Implementation complete through the stdio MCP server; Claude Code, Cowork, and Pi integrations verified end-to-end. The HTTP/HTTPS transport was removed 2026-07-09 (no consumers — stdio only).
 - Full spec at `docs/specs/local-rag.md` — read this before any slice.
 - The 2026-07-09 ranking-quality push shipped: golden-query eval harness (`local-rag eval`, supports negative queries), ~1,200-char markdown chunk cap, real scores (`cosine`/`bm25`), cosine-plus-lexical-boost ranking, and fixes for LanceDB FTS delta bugs (`Store.optimize`, `_fts_top`).
 - 2026-10-19: slice 11 (freshness in `index_status`) and slice 12 (frontmatter `note_date`/`status`/`tags` + reserved `kind` column on every chunk; `index` exits 4 on pre-slice tables until `index --force`) shipped. How the parts fit and what models see: `docs/architecture.md`.
-- Slices 13 (ranking priors) and 15 (generated note summaries) are deferred — reasons and revisit triggers in `TODO.md`. Remaining candidate: slice 14 (callout chunks), gated on choosing callout types. Portability (`--json` CLI output, see `TODO.md`) remains open; pi-style harnesses are CLI-first with no built-in MCP.
+- Slices 13 (ranking priors) and 15 (generated note summaries) are deferred — reasons and revisit triggers in `TODO.md`. Remaining candidate: slice 14 (callout chunks), gated on choosing callout types. Portability (`--json` CLI output, see `TODO.md`) remains open for scripts and harnesses without MCP.
 - **Never commit personal vault paths or note names** — golden-query eval data lives in gitignored `*.local.toml` files.
 
 ## Repository / publishing

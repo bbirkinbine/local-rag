@@ -1,7 +1,8 @@
 # local-rag
 
 Local semantic + keyword search across your Obsidian vault and source repos,
-exposed to Claude Code and Cowork over the Model Context Protocol (MCP).
+exposed to Claude Code, Cowork, Pi, and other clients over the Model Context
+Protocol (MCP).
 
 No cloud APIs. No API keys. No telemetry. Everything — embeddings, vectors,
 queries — stays on your machine.
@@ -22,9 +23,9 @@ queries — stays on your machine.
   sources                   indexer                store              server               clients
  ─────────────         ──────────────────       ──────────       ────────────────       ───────────────
   Obsidian vault    ─┐                                                                  ┌─ Cowork
-  ~/Downloads/src/A ─┼─►  chunker → embedder ─► LanceDB  ─►  MCP stdio server  ───────┤
-  ~/Downloads/src/B ─┘    (md headers,         one table        tools:                  └─ Claude Code
-                          code line-windows)   per source       - search                    (VS Code)
+  ~/Downloads/src/A ─┼─►  chunker → embedder ─► LanceDB  ─►  MCP stdio server  ───────┼─ Claude Code
+  ~/Downloads/src/B ─┘    (md headers,         one table        tools:                  └─ Pi
+                          code line-windows)   per source       - search
                                                                 - list_sources
                                                                 - index_status
 ```
@@ -88,7 +89,7 @@ clients afterwards so their servers load the new code. Details:
 - How it works and why → [`docs/architecture.md`](docs/architecture.md)
 - Configure what gets indexed → [`docs/configuration.md`](docs/configuration.md)
 - Use it from the CLI (including `eval` for retrieval quality) → [`docs/cli.md`](docs/cli.md)
-- Wire it into a Claude client → [`docs/claude-integration.md`](docs/claude-integration.md)
+- Wire it into an agent client → [`docs/claude-integration.md`](docs/claude-integration.md)
 - Run on a schedule (cron, `launchd`) → [`docs/deployment.md`](docs/deployment.md)
 - Full spec → [`docs/specs/local-rag.md`](docs/specs/local-rag.md)
 - Open work / known gaps → [`TODO.md`](TODO.md)

@@ -11,8 +11,8 @@ per-slice specs beside it.
   sources               indexing (local-rag index)                  store                    surfaces
  ─────────────   ──────────────────────────────────────────    ─────────────────     ──────────────────────
   notes vault ─┐   walk ─► hash ─► chunk ─► embed ─► upsert  ─►  LanceDB             ┌─► MCP stdio server ─► Claude Code,
-  repo A ──────┼─► (allow- (SHA-   (md      (Ollama  (+ merge,   one table per   ────┤     search / list_sources   Cowork, any
-  repo B ──────┘    list)   256)   headings, bge-m3)  FTS        source, + run log   │     / index_status          MCP client
+  repo A ──────┼─► (allow- (SHA-   (md      (Ollama  (+ merge,   one table per   ────┤     search / list_sources   Cowork, Pi,
+  repo B ──────┘    list)   256)   headings, bge-m3)  FTS        source, + run log   │     / index_status          any MCP client
                                    code               rebuild,   + freshness file    └─► CLI ─► humans, scripts,
                                    windows)           prune)                              CLI-first agents
 ```
@@ -84,7 +84,7 @@ schedule ([deployment](deployment.md)).
 **Opt-in sources.** Nothing is indexed unless a `[[sources]]` block names it,
 so cloned third-party repos stay invisible by default.
 
-**stdio MCP.** Claude Code and Cowork both spawn stdio servers themselves, so
+**stdio MCP.** Claude Code, Cowork, and Pi spawn stdio servers themselves, so
 there is no daemon, port or auth to manage. An HTTP transport was built and
 removed once it had no consumer.
 

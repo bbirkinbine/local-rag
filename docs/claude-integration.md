@@ -1,7 +1,7 @@
-# Integrating local-rag with Claude apps
+# Integrating local-rag with agent clients
 
 `local-rag` exposes three MCP tools (`search`, `list_sources`,
-`index_status`) over a stdio MCP server. Both first-party clients spawn
+`index_status`) over a stdio MCP server. Supported local clients spawn
 that server themselves — there is no long-running process to manage.
 
 For the full tool reference — parameters, every field a hit returns
@@ -15,6 +15,7 @@ a model should read them — see
 |------------------------------|---------------------------------------------------|------------------|
 | Claude Code (CLI + VS Code)  | stdio, registered via `claude mcp add`            | ✓ Supported      |
 | Claude Cowork (desktop)      | stdio, via `claude_desktop_config.json`           | ✓ Supported      |
+| Pi                           | stdio, registered via `pi mcp add`                | ✓ Supported      |
 | Claude.ai (web)              | remote MCP only (public HTTPS URL)                | ✗ Not supported  |
 
 An HTTP/HTTPS transport existed in earlier revisions but was removed once
@@ -66,6 +67,35 @@ Prompts that won't: ones that look answerable from the current
 working-directory context alone (Claude Code already has `Grep`/`Read`
 over the CWD). Naming `local-rag` or `vault` in the prompt nudges the
 model toward the right tool.
+
+---
+
+## Pi
+
+Current Pi releases include built-in MCP support and can spawn local-rag's
+stdio server directly.
+
+### Setup (one-time)
+
+```bash
+pi mcp add local-rag -- uv --directory /path/to/local-rag run local-rag mcp
+```
+
+This registers the server at user scope by default. Replace
+`/path/to/local-rag` with the absolute path to your clone. To keep the
+registration local to one trusted project, add `--local` (or `-l`).
+
+### Verify
+
+```bash
+pi mcp list
+# Expected: local-rag connected with search, list_sources, and index_status
+```
+
+Inside an interactive session, `/mcp` shows the connection and tool exposure.
+If you add or change the server outside the session, run `/reload`. Pi's
+default MCP exposure makes the tools available through codemode; the model can
+then discover and call them when a prompt needs indexed knowledge.
 
 ---
 
@@ -142,24 +172,21 @@ feature with attached knowledge files. Trade-offs vs local-rag:
 
 If web access matters more than privacy for a specific session, attach a
 few key docs to a Project. Otherwise, save the deeper queries for Claude
-Code / Cowork where local-rag is wired up.
+Code, Cowork, or Pi where local-rag is wired up.
 
 ---
 
 ## Other agent harnesses
 
 The server is plain stdio MCP, so any MCP-native harness takes the same
-one-line config as Claude Code (Cursor, Windsurf, Cline/Roo Code,
-Continue, Zed, VS Code Copilot agent mode, JetBrains AI, Codex CLI,
-Gemini CLI, Goose, and MCP adapters for the OpenAI Agents SDK /
+one-line configuration pattern as Claude Code and Pi (Cursor, Windsurf,
+Cline/Roo Code, Continue, Zed, VS Code Copilot agent mode, JetBrains AI,
+Codex CLI, Gemini CLI, Goose, and MCP adapters for the OpenAI Agents SDK /
 LangChain / LlamaIndex). HTTP-only clients need a stdio-to-HTTP adapter
 such as `mcp-proxy`.
 
-CLI-first harnesses with no built-in MCP (notably
-[pi](https://github.com/badlogic/pi-mono), which favors CLI tools plus
-on-demand READMEs over MCP's up-front tool-description cost) should call
-the `local-rag` CLI directly — see `TODO.md` for the planned `--json`
-output and agent-facing CLI README.
+Harnesses without MCP can still call the `local-rag` CLI directly. See
+`TODO.md` for planned machine-readable JSON output.
 
 ---
 
@@ -218,9 +245,9 @@ and has rows: `uv run local-rag list`. If counts are zero or look wrong,
 re-run `uv run local-rag index` and check stderr for errors.
 
 **Any client: new result fields missing after an upgrade** — The stdio
-server keeps the code it started with. Restart Claude Code / fully quit
-and relaunch the desktop app. If fields like `note_date` come back empty
-for every hit, the index predates them: see
+server keeps the code it started with. Restart Claude Code, fully quit and
+relaunch the desktop app, or run `/mcp reconnect local-rag` in Pi. If fields
+like `note_date` come back empty for every hit, the index predates them: see
 [deployment.md → Upgrading](deployment.md#upgrading).
 
 **Any client: stale results after editing the vault** — The server
