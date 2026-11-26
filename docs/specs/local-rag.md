@@ -110,7 +110,7 @@ Once installed (`uv pip install -e .`):
 
 - Don't add a vector index (`create_index`) for v1. Brute-force scan is fine for <100k chunks; the trigger to revisit is query latency >500 ms.
 - Don't pull in `langchain` or `llama-index`. Do the chunking inline — both libraries are too heavy for what is essentially a 200-line job.
-- Don't embed binary files. Use a strict extension allowlist (`.md`, `.txt`, `.rst`, `.py`, `.js`, `.ts`, `.go`, `.rs`, `.toml`, `.yaml`, `.json`, etc.); skip files >1 MB.
+- Don't embed binary files. Use a strict extension allowlist (`.md`, `.txt`, `.rst`, `.py`, `.js`, `.ts`, `.go`, `.rs`, `.toml`, `.yaml`, `.json`, etc.); skip files ≥ the source's `max_file_mb` (default 1 MB; raise it per source for long text such as converted books).
 - Don't assume Ollama is running. Health-check on CLI startup; surface a clear error.
 - Don't index by default — every source must be opt-in via config (the allowlist rule).
 

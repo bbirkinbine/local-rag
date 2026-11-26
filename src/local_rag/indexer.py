@@ -48,8 +48,6 @@ ALLOWED_EXTENSIONS: frozenset[str] = frozenset(
     }
 )
 
-_DEFAULT_MAX_BYTES = 1_048_576
-
 FileStatus = Literal[
     "embedded",
     "unchanged",
@@ -98,12 +96,10 @@ class Indexer:
         store: Store,
         embedder: Embedder,
         *,
-        max_file_bytes: int = _DEFAULT_MAX_BYTES,
         allowed_extensions: frozenset[str] | None = None,
     ) -> None:
         self._store = store
         self._embedder = embedder
-        self._max_file_bytes = max_file_bytes
         self._allowed_extensions = allowed_extensions or ALLOWED_EXTENSIONS
 
     def index_source(self, source: Source, *, force: bool = False) -> IndexResult:
@@ -134,7 +130,7 @@ class Indexer:
         # mis-classify them as deleted orphans on the next reindex.
         for entry in _walk_entries(
             source,
-            max_bytes=self._max_file_bytes,
+            max_bytes=source.max_file_bytes,
             allowed_extensions=self._allowed_extensions,
         ):
             seen_paths.add(str(entry.path))
