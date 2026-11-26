@@ -34,6 +34,7 @@ ignore = [".obsidian/**", ".trash/**"]
 date_fields = ["updated", "created"]
 status_field = "status"
 tags_field = "tags"
+max_file_mb = 1
 
 [[sources]]
 name = "local-rag"
@@ -82,10 +83,16 @@ its own table.
 | `date_fields` | no | `["updated", "created"]` | Frontmatter keys tried in order for the note's date; the first `YYYY-MM-DD` value wins. `[]` means no dates. |
 | `status_field` | no | `"status"` | Frontmatter key holding the note's status. |
 | `tags_field` | no | `"tags"` | Frontmatter key holding the note's tags. |
+| `max_file_mb` | no | `1` | Size cap per file, in MB (1 MB = 1,048,576 bytes); decimals allowed. Files at or over it are skipped and reported as `skipped_oversize`. |
 
-Regardless of settings, only files on the extension allowlist are indexed and
-files over 1 MB are skipped — see the [spec](specs/local-rag.md) for the exact
-lists.
+Regardless of settings, only files on the extension allowlist are indexed —
+see the [spec](specs/local-rag.md) for the exact list.
+
+Raising `max_file_mb` takes effect on the next `local-rag index`: newly
+allowed files are embedded, no `--force` needed. Lowering it doesn't remove
+anything already indexed: a file now over the cap is skipped, but its last
+indexed chunks stay searchable until the file shrinks back under the cap or
+is deleted.
 
 ### Frontmatter metadata
 
@@ -144,7 +151,7 @@ has `keep_runs` runs to work with again.
 
 ## Internals
 
-Behavior that isn't configurable — the extension allowlist, the 1 MB per-file
-size cap, the incremental SHA-256 hashing rules, chunk sizes, ranking — is
-described in [architecture](architecture.md), with the original design
-record in the [spec](specs/local-rag.md).
+Behavior that isn't configurable — the extension allowlist, the incremental
+SHA-256 hashing rules, chunk sizes, ranking — is described in
+[architecture](architecture.md), with the original design record in the
+[spec](specs/local-rag.md).

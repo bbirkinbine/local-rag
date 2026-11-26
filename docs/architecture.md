@@ -20,7 +20,7 @@ per-slice specs beside it.
 | Part | Module | Job |
 | --- | --- | --- |
 | Config | `config.py` | Parse and validate `config.toml`: sources, embedding, store and frontmatter settings. |
-| Walker | `indexer.py` | List the files of one source: extension allowlist, 1 MB cap, `ignore` globs, optional `.gitignore`. |
+| Walker | `indexer.py` | List the files of one source: extension allowlist, per-source size cap (`max_file_mb`, default 1 MB), `ignore` globs, optional `.gitignore`. |
 | Chunkers | `chunkers.py`, `chunk_split.py` | Split markdown at headings and code into line windows; cap chunk size. |
 | Frontmatter | `frontmatter.py` | Read a note's date, status and tags from its YAML frontmatter. |
 | Embedder | `embedder.py` | Batch text through Ollama's `/api/embed`; health-check the model. |
@@ -108,7 +108,8 @@ stdlib `tomllib`.
    the run stops (exit 3). Both refusals are recorded for `index_status`.
 3. **Walk.** Files on the extension allowlist (`.md`, `.txt`, `.rst`, `.py`,
    `.js`, `.ts`, `.go`, `.rs`, `.toml`, `.yaml`, `.json` and a few more),
-   under 1 MB, not matched by `ignore` or (optionally) `.gitignore`.
+   under the source's `max_file_mb` (default 1 MB), not matched by `ignore`
+   or (optionally) `.gitignore`.
 4. **Hash.** Unchanged files are skipped. Files gone from disk have their
    chunks deleted.
 5. **Chunk.** `.md` files get the markdown chunker and frontmatter metadata;

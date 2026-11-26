@@ -38,6 +38,9 @@ date_fields = ["updated", "created"]
 status_field = "status"
 # default: "tags"
 tags_field = "tags"
+# Files at or over this size (in MB) are skipped. Raise it for long text such
+# as books converted to Markdown. default: 1
+max_file_mb = 1
 
 [[sources]]
 name = "local-rag"

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from local_rag.config import Config, ConfigError
+from local_rag.config import DEFAULT_MAX_FILE_MB, Config, ConfigError
 from local_rag.frontmatter import DEFAULT_FRONTMATTER_FIELDS, FrontmatterFields
 from local_rag.store import DEFAULT_KEEP_RUNS
 
@@ -596,4 +596,60 @@ def test_invalid_frontmatter_keys_raise_with_source_name(
     cfg_path = _write(tmp_path / "config.toml", toml)
 
     with pytest.raises(ConfigError, match="source 'vault'"):
+        Config.load(cfg_path)
+
+
+# ------------------------------------------------------ per-file size cap ---
+
+
+def test_max_file_mb_absent_uses_shipped_default(tmp_path: Path, vault_dir: Path) -> None:
+    cfg_path = _write(tmp_path / "config.toml", _minimal_toml(tmp_path, vault_dir))
+
+    assert Config.load(cfg_path).sources[0].max_file_mb == DEFAULT_MAX_FILE_MB
+
+
+def test_shipped_default_cap_is_one_mebibyte(tmp_path: Path, vault_dir: Path) -> None:
+    """The pre-config behavior was a fixed 1,048,576-byte cap; the default keeps it."""
+    cfg_path = _write(tmp_path / "config.toml", _minimal_toml(tmp_path, vault_dir))
+
+    assert Config.load(cfg_path).sources[0].max_file_bytes == 1_048_576
+
+
+@pytest.mark.parametrize(
+    ("line", "expected_bytes"),
+    [
+        ("max_file_mb = 5", 5 * 1_048_576),
+        ("max_file_mb = 1.5", 1_572_864),
+        ("max_file_mb = 0.25", 262_144),
+    ],
+)
+def test_max_file_mb_converts_to_bytes(
+    tmp_path: Path, vault_dir: Path, line: str, expected_bytes: int
+) -> None:
+    toml = _minimal_toml(tmp_path, vault_dir) + line + "\n"
+    cfg_path = _write(tmp_path / "config.toml", toml)
+
+    assert Config.load(cfg_path).sources[0].max_file_bytes == expected_bytes
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "max_file_mb = 0",
+        "max_file_mb = -1",
+        "max_file_mb = true",
+        'max_file_mb = "5"',
+        "max_file_mb = inf",
+        "max_file_mb = nan",
+        "max_file_mb = 1e308",  # finite in MB, overflows to inf in bytes
+        "max_file_mb = 1e-7",  # positive, but truncates to a 0-byte cap
+    ],
+)
+def test_invalid_max_file_mb_raises_with_source_name(
+    tmp_path: Path, vault_dir: Path, line: str
+) -> None:
+    toml = _minimal_toml(tmp_path, vault_dir) + line + "\n"
+    cfg_path = _write(tmp_path / "config.toml", toml)
+
+    with pytest.raises(ConfigError, match="source 'vault': 'max_file_mb'"):
         Config.load(cfg_path)

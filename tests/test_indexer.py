@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from local_rag.config import Source
+from local_rag.config import DEFAULT_MAX_FILE_MB, Source
 from local_rag.frontmatter import FrontmatterFields
 from local_rag.indexer import Indexer, _file_sha256, _iter_source_files
 from local_rag.schema import StaleSchemaError
@@ -51,6 +51,7 @@ def _make_source(
     type_: str = "code",
     ignore: list[str] | None = None,
     respect_gitignore: bool = False,
+    max_file_mb: float = DEFAULT_MAX_FILE_MB,
 ) -> Source:
     return Source(
         name=name,
@@ -58,6 +59,7 @@ def _make_source(
         type=type_,  # type: ignore[arg-type]
         ignore=ignore or [],
         respect_gitignore=respect_gitignore,
+        max_file_mb=max_file_mb,
     )
 
 
@@ -262,7 +264,7 @@ def test_indexer_marks_oversize_files(store: Store, src_dir: Path) -> None:
     big = src_dir / "big.md"
     big.write_text("x" * (2_000_000))
     src = _make_source("vault", src_dir)
-    idx = Indexer(store, FakeEmbedder(), max_file_bytes=1_048_576)
+    idx = Indexer(store, FakeEmbedder())
 
     result = idx.index_source(src)
 
@@ -273,17 +275,54 @@ def test_indexer_oversize_file_does_not_get_orphan_deleted(store: Store, src_dir
     """A previously-indexed file that grows past the cap stays in the result as
     oversize, not double-reported as deleted + oversize."""
     p = _write(src_dir / "a.md", "# A\n\nshort\n")
-    src = _make_source("vault", src_dir)
-    idx = Indexer(store, FakeEmbedder(), max_file_bytes=10_000)
+    src = _make_source("vault", src_dir, max_file_mb=0.01)  # 10,485 bytes
+    idx = Indexer(store, FakeEmbedder())
     idx.index_source(src)
 
     p.write_text("x" * 20_000)  # over the cap
-    result = Indexer(store, FakeEmbedder(), max_file_bytes=10_000).index_source(src)
+    result = Indexer(store, FakeEmbedder()).index_source(src)
 
     statuses = [fr.status for fr in result.files]
     assert statuses == ["skipped_oversize"]
     # Not deleted from disk, so it shouldn't appear as 'deleted' anywhere.
     assert "deleted" not in statuses
+
+
+def test_indexer_embeds_file_under_a_raised_source_cap(store: Store, src_dir: Path) -> None:
+    """A file over the 1 MB default is indexed when its source raises the cap."""
+    _write(src_dir / "book.py", "x" * 1_100_000)
+    src = _make_source("books", src_dir, max_file_mb=2)
+
+    result = Indexer(store, FakeEmbedder()).index_source(src)
+
+    assert [fr.status for fr in result.files] == ["embedded"]
+
+
+def test_indexer_skips_file_exactly_at_the_source_cap(store: Store, src_dir: Path) -> None:
+    src = _make_source("s", src_dir, max_file_mb=0.001)  # 1,048 bytes
+    _write(src_dir / "edge.py", "x" * src.max_file_bytes)
+
+    result = Indexer(store, FakeEmbedder()).index_source(src)
+
+    assert [fr.status for fr in result.files] == ["skipped_oversize"]
+
+
+def test_indexer_embeds_file_one_byte_under_the_source_cap(store: Store, src_dir: Path) -> None:
+    src = _make_source("s", src_dir, max_file_mb=0.001)  # 1,048 bytes
+    _write(src_dir / "edge.py", "x" * (src.max_file_bytes - 1))
+
+    result = Indexer(store, FakeEmbedder()).index_source(src)
+
+    assert [fr.status for fr in result.files] == ["embedded"]
+
+
+def test_indexer_skips_file_over_a_lowered_source_cap(store: Store, src_dir: Path) -> None:
+    _write(src_dir / "mid.py", "x = 1\n" * 1_000)  # 6,000 bytes
+    src = _make_source("small", src_dir, max_file_mb=0.001)  # 1,048 bytes
+
+    result = Indexer(store, FakeEmbedder()).index_source(src)
+
+    assert [fr.status for fr in result.files] == ["skipped_oversize"]
 
 
 def test_indexer_empty_file_status_is_empty(store: Store, src_dir: Path) -> None:

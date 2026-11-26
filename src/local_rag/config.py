@@ -9,6 +9,7 @@ rather than restated here.
 
 from __future__ import annotations
 
+import math
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -19,6 +20,12 @@ from local_rag.store import DEFAULT_KEEP_RUNS
 
 SourceType = Literal["markdown", "code"]
 _VALID_SOURCE_TYPES: frozenset[str] = frozenset({"markdown", "code"})
+
+# Per-file size cap, in MB (1 MB = 1,048,576 bytes). The default guards
+# code repos against generated or vendored blobs; raise it per source for
+# corpora of genuinely long text files, such as books converted to Markdown.
+DEFAULT_MAX_FILE_MB = 1
+_BYTES_PER_MB = 1_048_576
 
 
 class ConfigError(Exception):
@@ -41,6 +48,12 @@ class Source:
     ignore: list[str] = field(default_factory=list)
     respect_gitignore: bool = False
     frontmatter: FrontmatterFields = DEFAULT_FRONTMATTER_FIELDS
+    max_file_mb: float = DEFAULT_MAX_FILE_MB
+
+    @property
+    def max_file_bytes(self) -> int:
+        """The size cap in bytes; files at or over it are skipped as oversize."""
+        return int(self.max_file_mb * _BYTES_PER_MB)
 
 
 @dataclass(frozen=True)
@@ -194,7 +207,35 @@ def _parse_source(d: dict[str, Any]) -> Source:
         ignore=list(ignore_raw),
         respect_gitignore=respect,
         frontmatter=_parse_frontmatter_fields(name, d),
+        max_file_mb=_parse_max_file_mb(name, d),
     )
+
+
+def _parse_max_file_mb(name: str, d: dict[str, Any]) -> float:
+    """Parse a source's optional per-file size cap, in MB.
+
+    Validated in bytes, the unit the walker compares against, so every
+    accepted value is a usable cap.
+
+    Raises:
+        ConfigError: If the value is not a number, or its byte cap is not
+            finite or is under one byte.
+    """
+    value = d.get("max_file_mb", DEFAULT_MAX_FILE_MB)
+    # `bool` is a subclass of `int`; `true` is a typo, not a one-MB cap.
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ConfigError(
+            f"source {name!r}: 'max_file_mb' must be a number, got {type(value).__name__}"
+        )
+    # Catches TOML's `inf`/`nan`, values like 1e308 that overflow once scaled
+    # to bytes, and positive values like 1e-7 that truncate to a 0-byte cap.
+    cap_bytes = value * _BYTES_PER_MB
+    if not math.isfinite(cap_bytes) or cap_bytes < 1:
+        raise ConfigError(
+            f"source {name!r}: 'max_file_mb' must be a finite number of MB "
+            f"of at least one byte, got {value!r}"
+        )
+    return value
 
 
 def _parse_frontmatter_fields(name: str, d: dict[str, Any]) -> FrontmatterFields:

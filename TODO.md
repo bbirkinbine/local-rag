@@ -43,6 +43,19 @@ Constraints unchanged: keep `search(query, sources, k)` backward
 compatible, keep indexing incremental, and give any index-format change a
 migration path (`index --force` is the reindex path for chunker changes).
 
+## Open — index hygiene
+
+- [ ] **Surface stale chunks of oversize files in `index_status`.** When an
+      already-indexed file grows past its source's `max_file_mb` (or the cap
+      is lowered), the file is skipped as `skipped_oversize` but its last
+      indexed chunks stay in the store, keep the file's real path and old
+      `note_date`, and are never reported — not even `index --force` clears
+      them. Decided 2026-11-25 to keep the chunks (a frozen copy beats the
+      note vanishing from search) but make them visible: flag "N files over
+      the cap; indexed copy from <date>". Affects nothing today (largest
+      indexed file is ~256 KB against a 1 MB cap). Trigger: the first
+      `skipped_oversize` on a file that has chunks in the store.
+
 ## Open — portability across agent harnesses (scoped 2026-07-09)
 
 The stdio MCP server already drops into any MCP-native harness with a

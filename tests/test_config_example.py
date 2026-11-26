@@ -11,7 +11,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from local_rag.config import Config
+from local_rag.config import DEFAULT_MAX_FILE_MB, Config
 from local_rag.frontmatter import DEFAULT_FRONTMATTER_FIELDS
 from local_rag.store import DEFAULT_KEEP_RUNS
 
@@ -77,3 +77,8 @@ def test_example_states_frontmatter_defaults_explicitly() -> None:
         DEFAULT_FRONTMATTER_FIELDS.status_field,
         DEFAULT_FRONTMATTER_FIELDS.tags_field,
     )
+
+
+def test_example_states_max_file_mb_default_explicitly() -> None:
+    raw = tomllib.loads(EXAMPLE_PATH.read_text(encoding="utf-8"))
+    assert raw["sources"][0]["max_file_mb"] == DEFAULT_MAX_FILE_MB
